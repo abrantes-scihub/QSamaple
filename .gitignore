@@ -1,0 +1,51 @@
+# Ignore compiled Python files
+#This pattern ignores compiled Python files. In Python, when you run a script or module,
+#Python generates bytecode files with a .pyc extension to improve execution speed on subsequent runs.
+#These compiled files are not meant to be versioned, as they can be regenerated.
+*.pyc
+
+
+# Ignore Python cache directories
+#his entry ignores the Python cache directory. In Python 3, the __pycache__ directory
+#is created to store compiled bytecode files (*.pyc). Excluding this directory helps keep
+#the repository clean and avoids versioning cached files.
+__pycache__
+
+
+# Ignores optimized compiled Python files
+#Similar to *.pyc, these files are generated when Python code is optimized for execution.
+#They are not typically versioned.
+*.pyo
+
+
+# Ignore logs
+#Ignores log files. Log files often contain runtime information or debugging output,
+#and they are generally not meant to be versioned. Developers and systems might generate
+#log files during the development or execution of a program.
+*.log
+
+
+# Ignores swap files.
+#Swap files are temporary files created by some text editors (e.g., Vim)
+#to store changes made during editing. They are not meant to be versioned.
+*.swp
+
+
+# Ignore environment files
+#This entry ignores a file named .env. The .env file is often used to store environment
+#variables for a project. Environment variables can include sensitive information such
+#as API keys or database credentials. Ignoring this file ensures that sensitive information
+#is not accidentally committed to version control, as it is expected that developers will
+#have their own local version of this file with their specific configuration.
+.env
+
+
+# Ignore virtual environment directories
+#This entry ignores a directory named .venv. This directory is often used to store a virtual environment,
+#which is a self-contained Python environment that allows you to install dependencies for a project
+#without affecting the system-wide Python installation. Virtual environments are usually created
+#with tools like virtualenv or venv. Ignoring the virtual environment directory is common practice
+#because it can be regenerated using the project's requirements file.
+.venv
+
+.temp
