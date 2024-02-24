@@ -48,4 +48,4 @@ __pycache__
 #because it can be regenerated using the project's requirements file.
 .venv
 
-.temp
+*.temp
