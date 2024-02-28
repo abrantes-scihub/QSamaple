@@ -49,7 +49,7 @@ from qgis.core import (QgsProcessing,
                       QgsVectorLayer,
                       QgsFeature,
                       QgsGeometry,
-                      QgsProject
+                      QgsProject,
                       )
 
 from PyQt5.QtCore import QCoreApplication, QVariant
@@ -62,17 +62,21 @@ import logging
 import random
 import string
 
-
+####################################################################################################
+########################### The main class for processing the algorithms ###########################
+####################################################################################################
 
 class AccuracyMetrics(QgsProcessingAlgorithm):
     """
-    Accuracy Metrics
+    Processing functions for accuracy metrics
     """
 
+    # Constants for parameters
     INPUT = 'INPUT'
     OUTPUT = 'OUTPUT'
-    OBSERVED_VALUE = 'OBSERVED_DATA'
+    MEASURED_VALUE = 'MEASURED_DATA'
     ESTIMATED_VALUE = 'ESTIMATED_DATA'
+    CASE_FIELD = 'CASE_FIELD'
 
 
     def __init__(self):
@@ -82,8 +86,9 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
     def initAlgorithm(self, config):
         self.addParameter(QgsProcessingParameterVectorLayer(self.INPUT, self.tr('Input Vector Layer'), types=[QgsProcessing.TypeVectorPoint, QgsProcessing.TypeVectorPolygon]))
         self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Output Vector Layer'), createByDefault=True, supportsAppend=False, defaultValue=None, type=QgsProcessing.TypeVectorAnyGeometry))
-        self.addParameter(QgsProcessingParameterField(self.OBSERVED_VALUE, self.tr('Observed Data Field'), parentLayerParameterName=self.INPUT, type=QgsProcessingParameterField.Numeric, allowMultiple=False))
+        self.addParameter(QgsProcessingParameterField(self.MEASURED_VALUE, self.tr('Measured Data Field'), parentLayerParameterName=self.INPUT, type=QgsProcessingParameterField.Numeric, allowMultiple=False))
         self.addParameter(QgsProcessingParameterField(self.ESTIMATED_VALUE, self.tr('Estimated Data Field'), parentLayerParameterName=self.INPUT, type=QgsProcessingParameterField.Numeric, allowMultiple=False))
+        self.addParameter(QgsProcessingParameterField(self.CASE_FIELD, self.tr('Case Field'), parentLayerParameterName=self.INPUT, type=QgsProcessingParameterField.Any, allowMultiple=False, optional=True))
 
     def processAlgorithm(self, parameters, context, feedback):
         """
@@ -92,50 +97,48 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         dest_id = None
 
         # Extract parameters
-        layer_source, observed_field, estimated_field = self.extractParameters(parameters, context)
+        layer_source, measured_field, estimated_field, case_field = self.extractParameters(parameters, context)
 
-        # Prepare data
-        data = self.prepareData(layer_source, observed_field, estimated_field)
+        # First call to prepareData
+        data = self.prepareData(layer_source, measured_field, estimated_field, case_field)
 
-        # Calculate Accuracy Metrics
-        data = self.calculateError(data, observed_field, estimated_field)
-        data = self.calculateAbsoluteError(data, observed_field, estimated_field)
-        data = self.calculateRelativeError(data, observed_field, estimated_field)
-        data = self.calculateAbsoluteRelativeError(data, observed_field, estimated_field)
-        data = self.calculateAbsoluteError(data, observed_field, estimated_field)
+
+        # Second call to prepareData
+        data = AccuracyMetricsUtils.calculateError(self, data, measured_field, estimated_field)
+        data = AccuracyMetricsUtils.calculateAbsoluteError(self, data, measured_field, estimated_field)
+        data = AccuracyMetricsUtils.calculateRelativeError(self, data, measured_field, estimated_field)
+        data = AccuracyMetricsUtils.calculateAbsoluteRelativeError(self, data, measured_field, estimated_field)
+
+        # If case_field is specified, calculate Mean Absolute Error separately for each class
+        if case_field:
+            data = AccuracyMetricsUtils.calculateMeanAbsoluteError(self, data, measured_field, estimated_field, case_field)
+        else:
+            # Otherwise, calculate Mean Absolute Error for the entire dataset
+            data = AccuracyMetricsUtils.calculateMeanAbsoluteError(self, data, measured_field, estimated_field)
 
         # Handle output
         dest_id = self.handleOutput(data, parameters, context, layer_source)
 
         return {self.OUTPUT: dest_id}
 
+
     def extractParameters(self, parameters, context):
         """
         Extract the parameters that will be used.
         """
         layer_source = self.parameterAsVectorLayer(parameters, self.INPUT, context)
-        observed_field = self.parameterAsString(parameters, self.OBSERVED_VALUE, context)
+        measured_field = self.parameterAsString(parameters, self.MEASURED_VALUE, context)
         estimated_field = self.parameterAsString(parameters, self.ESTIMATED_VALUE, context)
+        case_field = self.parameterAsString(parameters, self.CASE_FIELD, context)
 
-        # Debugging output
-        QgsMessageLog.logMessage(f"Observed Field: {observed_field}", 'Accuracy Metrics', Qgis.Info)
-        QgsMessageLog.logMessage(f"Estimated Field: {estimated_field}", 'Accuracy Metrics', Qgis.Info)
-        QgsMessageLog.logMessage(f"Available Fields: {[field.name() for field in layer_source.fields()]}", 'Accuracy Metrics', Qgis.Info)
+        # Prepare data
+        data = self.prepareData(layer_source, measured_field, estimated_field, case_field)
 
-        # Check if the observed and estimated fields are valid
-        observed_field_index = layer_source.fields().indexFromName(observed_field)
-        estimated_field_index = layer_source.fields().indexFromName(estimated_field)
-
-        QgsMessageLog.logMessage(f"Observed Field Index: {observed_field_index}", 'Accuracy Metrics', Qgis.Info)
-        QgsMessageLog.logMessage(f"Estimated Field Index: {estimated_field_index}", 'Accuracy Metrics', Qgis.Info)
-
-        if observed_field_index == -1 or estimated_field_index == -1:
-            raise QgsProcessingException('Invalid observed or estimated field.')
-
-        return layer_source, observed_field, estimated_field
+        return layer_source, measured_field, estimated_field, case_field
 
 
-    def prepareData(self, layer_source, observed_field, estimated_field):
+
+    def prepareData(self, layer_source, measured_field, estimated_field, case_field):
         try:
             if isinstance(layer_source, QgsVectorLayer):
                 layer = layer_source
@@ -146,20 +149,26 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
                 raise Exception('Failed to create QgsVectorLayer from input')
 
             data = self.qgisVectorLayerToGeoDataFrame(layer)
+
+            # Debugging output for data structure and types
+            QgsMessageLog.logMessage(f"Type of prepared data: {type(data)}", 'Accuracy Metrics', Qgis.Info)
+            QgsMessageLog.logMessage(f"Columns of prepared data: {data.columns}", 'Accuracy Metrics', Qgis.Info)
+            QgsMessageLog.logMessage(f"Structure of prepared data: {data.head()}", 'Accuracy Metrics', Qgis.Info)
+
             return data
 
         except Exception as e:
             logging.error(f"An error occurred during data preparation: {e}")
             raise
-            
+
+
 
     def qgisVectorLayerToGeoDataFrame(self, layer_source):
         try:
             fields = layer_source.fields()
             field_names = [field.name() for field in fields]
             data = {
-                field_name: [feature[field_name] for feature in layer_source.getFeatures()] for field_name in
-                field_names
+                field_name: [feature[field_name] for feature in layer_source.getFeatures()] for field_name in field_names
             }
 
             geometry = [feature.geometry().asWkt() for feature in layer_source.getFeatures()]
@@ -172,48 +181,14 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
             logging.exception(f"An error occurred during data preparation: {e}")
             raise
 
-    def calculateError(self, data, observed_field, estimated_field):
-        """
-        Calculate the Error.
-        """
-        data['Error'] = data[observed_field] - data[estimated_field]
-        return data
 
-
-    def calculateAbsoluteError(self, data, observed_field, estimated_field):
-        """
-        Calculate the Absolute Error.
-        """
-        data['Absolute Error'] = np.abs(data['Error'])
-        return data
-    
-
-    def calculateRelativeError(self, data, observed_field, estimated_field):
-        """
-        Calculate the Relative Error.
-        """
-        data['Relative Error'] = data['Error'] / data[observed_field]
-        return data
-
-    def calculateAbsoluteRelativeError(self, data, observed_field, estimated_field):
-        """
-        Calculate the Absolute Relative Error.
-        """
-        data['Absolute Relative Error'] = np.abs(data['Relative Error'])
-        return data
 
 
 
     def handleOutput(self, data, parameters, context, layer_source):
-        """
-        Handle the output layer containing the calculated error and the input layer parameters.
-        """
         try:
             # Shorten column name
-            # data.rename(columns={'Error': 'Error'}, inplace=True)
-            data.rename(columns={'Absolute Error': 'Abs_Error'}, inplace=True)
-            data.rename(columns={'Relative Error': 'Rel_Error'}, inplace=True)
-            data.rename(columns={'Absolute Relative Error': 'Abs_Rel_Error'}, inplace=True)
+            data.rename(columns={'Absolute Error': 'Abs_Error', 'Relative Error': 'Rel_Error', 'Absolute Relative Error': 'Abs_Rel_Error', 'Mean Absolute Error': 'M_Abs_E'}, inplace=True)
 
             rand_ext = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
             out_path = os.path.join(tempfile.gettempdir(), f'temp_output{rand_ext}.shp')
@@ -237,15 +212,26 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
             fields.append(QgsField('Abs_Error', QVariant.Double))
             fields.append(QgsField('Rel_Error', QVariant.Double))
             fields.append(QgsField('Abs_Rel_Error', QVariant.Double))
+            fields.append(QgsField('M_Abs_E', QVariant.Double))
 
-            # Print debug information
-            QgsMessageLog.logMessage(f"Fields for sink: {[field.name() for field in fields]}", 'Accuracy Metrics', Qgis.Info)
+            # Add case field if present
+            case_field = self.parameterAsString(parameters, self.CASE_FIELD, context)
+            if case_field:
+                # Check if the case field is already present in the source layer's fields
+                if case_field not in [field.name() for field in fields]:
+                    fields.append(QgsField(case_field, QVariant.String))
 
             (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context, fields,
                                                 QgsWkbTypes.Point, layer_source.crs())
 
             # Add features directly from the vector layer
             for feature in vector_layer.getFeatures():
+                if case_field:
+                    # Add the case field value to the sink
+                    case_value = data.loc[feature.id(), case_field]
+                    # Ensure the case value is not empty before setting the attribute
+                    if not pd.isna(case_value):
+                        feature.setAttribute(case_field, str(case_value))
                 sink.addFeature(feature)
 
             return dest_id
@@ -255,8 +241,9 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
 
 
 
-
-
+    """
+    Metadata for the Accuracy Metrics algorithm
+    """
     def name(self):
         return 'Accuracy Metrics'
 
@@ -288,3 +275,88 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         import os
         pluginPath = os.path.dirname(__file__)
         return QIcon(os.path.join(pluginPath, 'styles', 'icon.png'))
+
+####################################################################################################
+######################################## Utility functions #########################################
+####################################################################################################
+        
+class AccuracyMetricsUtils:
+    """
+    Utility functions for calculating accuracy
+    """	
+    @staticmethod
+    def calculateError(self, data, measured_field, estimated_field):
+        try:
+            # Log information about the data
+            QgsMessageLog.logMessage(f"Type of data: {type(data)}", 'Accuracy Metrics', Qgis.Info)
+            QgsMessageLog.logMessage(f"Columns of data: {data.columns}", 'Accuracy Metrics', Qgis.Info)
+            QgsMessageLog.logMessage(f"Structure of data: {data.head()}", 'Accuracy Metrics', Qgis.Info)
+
+            # Calculate the error
+            data['Error'] = data[measured_field] - data[estimated_field]
+            
+            # Add debug messages
+            QgsMessageLog.logMessage(f"Type of 'Error' column: {data['Error'].dtype}", 'Accuracy Metrics', Qgis.Info)
+            QgsMessageLog.logMessage(f"Unique values in 'Error' column: {data['Error'].unique()}", 'Accuracy Metrics', Qgis.Info)
+
+            return data
+
+        except Exception as e:
+            QgsMessageLog.logMessage(f"An error occurred during error calculation: {e}", 'Accuracy Metrics', Qgis.Critical)
+            raise
+
+
+
+
+
+    @staticmethod
+    def calculateAbsoluteError(self, data, measured_field, estimated_field):
+        """
+        Calculate the Absolute Error.
+        """
+        data['Absolute Error'] = np.abs(data['Error'])
+        return data
+    
+    @staticmethod
+    def calculateRelativeError(self, data, measured_field, estimated_field):
+        """
+        Calculate the Relative Error.
+        """
+        data['Relative Error'] = data['Error'] / data[measured_field]
+        return data
+
+    @staticmethod
+    def calculateAbsoluteRelativeError(self, data, measured_field, estimated_field):
+        """
+        Calculate the Absolute Relative Error.
+        """
+        data['Absolute Relative Error'] = np.abs(data['Relative Error'])
+        return data
+    
+
+
+    @staticmethod
+    def calculateMeanAbsoluteError(self, data, measured_field, estimated_field, case_field=None):
+        """
+        Calculate the Mean Absolute Error.
+        """
+        try:
+            if case_field is not None:
+                # Use the field calculator approach with expressions for grouped mean absolute errors
+                expression = f"mean(\"Error\", group_by:=\"{case_field}\")"
+                grouped_data = data.groupby(case_field, as_index=False).agg({'Error': 'mean'}).rename(columns={'Error': 'Mean Absolute Error'})
+                
+                # Handle empty values in case_field
+                grouped_data[case_field] = grouped_data[case_field].fillna("Unknown")  # Replace empty values with "Unknown"
+                
+                data = pd.merge(data, grouped_data, on=case_field, how='left')
+            else:
+                # Calculate Mean Absolute Error for the entire dataset
+                data['Error'] = pd.to_numeric(data['Error'], errors='coerce')  # Convert to numeric, coerce errors to NaN
+                data['Mean Absolute Error'] = np.abs(data['Error']).mean()
+
+            return data
+
+        except Exception as e:
+            QgsMessageLog.logMessage(f"An error occurred during Mean Absolute Error calculation: {e}", 'Accuracy Metrics', Qgis.Critical)
+            raise
