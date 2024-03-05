@@ -101,7 +101,7 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         # First call to prepareData
         data = self.prepareData(layer_source, measured_field, estimated_field, case_field)
 
-        # Second call to prepareData
+        # Calculate accuracy metrics
         data = AccuracyMetricsUtils.calculateError(self, data, measured_field, estimated_field)
         data = AccuracyMetricsUtils.calculateAbsoluteError(self, data, measured_field, estimated_field)
         data = AccuracyMetricsUtils.calculateRelativeError(self, data, measured_field, estimated_field)
