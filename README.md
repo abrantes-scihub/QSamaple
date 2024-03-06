@@ -23,10 +23,10 @@ A user-friendly tool for semi-automatic mapping and accuracy analysis  in plot-l
 ## Installation
 
 1. Open QGIS.
-2. Go to the "Plugins" menu and select "Manage and Install Plugins".
-3. In the "Plugins" dialog, click on the "Install from ZIP" button.
-4. Select the ZIP file of your plugin and click "Install Plugin".
-5. Once installed, enable the plugin by checking the corresponding checkbox in the "Plugins" dialog.
+2. Go to the <code>Plugins<c/ode> menu and select <code>Manage and Install Plugins</code>.
+3. In the <code>Plugins<c/ode> dialog, click on the <code>Install from ZIP</code> button.
+4. Select the ZIP file of your plugin and click <code>Install Plugin</code>.
+5. Once installed, enable the plugin by checking the corresponding checkbox in the <code>Plugins</code> dialog.
 
 ## Usage
 
