@@ -8,12 +8,12 @@ A user-friendly tool for semi-automatic mapping and accuracy analysis  in plot-l
 
 ## Features
 
-- SAMPLE Toolbox comprises a set of tools for spatial analysis and accuracy measurements combined to design the samaple model - a workflow that performs the mapping and accuracy measurements in a semi-automatic manner.
+- SAMPLE Toolbox comprises a set of tools for spatial analysis and accuracy measurements combined to design the **samaple model** - a workflow that performs the mapping and accuracy measurements in a semi-automatic manner.
 
 - Spatial Analysis
-    - Local Moran's I: it was designed to calculate Local Moran's I, a spatial autocorrelation statistic, for analyzing spatial patterns and outliers locations.
+    - *Local Moran's I*: it was designed to calculate Local Moran's I, a spatial autocorrelation statistic, for analyzing spatial patterns and outliers locations.
 
-    - Multivariate Clustering: it uses the K-means clustering method to cluster features based on user-selected numeric analysis fields.
+    - *Multivariate Clustering*: it uses the K-means clustering method to cluster features based on user-selected numeric analysis fields.
     If the user does not specify the number of clusters, the algorithm evaluates the optimal number of clusters using the Calinski-Harabasz pseudo F-statistic.
 
 - Accuracy Metrics
