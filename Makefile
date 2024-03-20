@@ -3,7 +3,7 @@
 #
 # A user friendly tool for semi-automatic mapping and accuracy analysis in plot-level experiments
 #							 -------------------
-#		begin				: 2024-02-16
+#		begin				: 2023-05-23
 #		git sha				: $Format:%H$
 #		copyright			: (C) 2024 by Tales Abrantes
 #		email				: abrantales@hotmail.com
