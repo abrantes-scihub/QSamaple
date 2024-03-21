@@ -1,9 +1,6 @@
 from qgis.core import (
     Qgis,
-    QgsVectorLayer,
     QgsRasterLayer,
-    QgsSingleBandGrayRenderer,
-    QgsRasterFileWriter,
     QgsProcessingAlgorithm,
     QgsProcessingParameterVectorLayer,
     QgsProcessingParameterField,
@@ -11,23 +8,19 @@ from qgis.core import (
     QgsProcessingParameterRasterDestination,
     QgsProcessing,
     QgsProject,
-    QgsWkbTypes,
     QgsMessageLog
 )
 from qgis.PyQt.QtCore import QCoreApplication
 import os
 import numpy as np
-from scipy.interpolate import griddata
 from osgeo import gdal, osr
-from scipy.interpolate import CloughTocher2DInterpolator
+from scipy.spatial import KDTree
 
 # Configure logging
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
 class NaturalNeighbour(QgsProcessingAlgorithm):
-
     logger = logging.getLogger(__name__)
 
     INPUT = 'INPUT'
@@ -51,9 +44,6 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterNumber(self.OUTPUT_CELL_SIZE, self.tr('Output Cell Size'), type=QgsProcessingParameterNumber.Double, minValue=0.0))
         self.addParameter(QgsProcessingParameterRasterDestination(self.OUTPUT, self.tr('Output Raster')))
 
-        # Initialize QgsMessageLog
-        QgsMessageLog.logMessage("Logging initialized", 'NaturalNeighbour', level=Qgis.Info)
-
     def processAlgorithm(self, parameters, context, feedback):
         try:
             # Extract parameters
@@ -62,16 +52,8 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             output_cell_size = self.parameterAsDouble(parameters, self.OUTPUT_CELL_SIZE, context)
             output_raster_path = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
 
-            # Log input parameters
-            QgsMessageLog.logMessage(f"Input layer: {input_layer.name()}", 'NaturalNeighbour', level=Qgis.Info)
-            QgsMessageLog.logMessage(f"Field analysis: {field_analysis}", 'NaturalNeighbour', level=Qgis.Info)
-            QgsMessageLog.logMessage(f"Output cell size: {output_cell_size}", 'NaturalNeighbour', level=Qgis.Info)
-
-            # Perform natural neighbor interpolation
-            interpolated_values = self.natural_neighbor_interpolation(input_layer, field_analysis, output_cell_size)
-
-            # Log interpolated values
-            self.logger.debug(f"Interpolated values: {interpolated_values}")
+            # Perform Sibson interpolation
+            interpolated_values = self.sibson_interpolation(input_layer, field_analysis, output_cell_size)
 
             # Write interpolated values to output raster
             self.save_interpolated_raster(interpolated_values, output_raster_path, input_layer.extent(), output_cell_size, input_layer.crs())
@@ -82,64 +64,48 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             feedback.reportError(f"An error occurred during processing: {e}")
             return {self.OUTPUT: ''}
 
-
-
-
-
-
-
-    def natural_neighbor_interpolation(self, input_layer, field, output_cell_size):
-        # Log information
-        QgsMessageLog.logMessage("Performing natural neighbor interpolation", 'NaturalNeighbour', level=Qgis.Info)
-
+    def sibson_interpolation(self, input_layer, field, output_cell_size):
         # Extract points and values from the input layer
-        points = []
-        values = []
-        for feature in input_layer.getFeatures():
-            point = feature.geometry().asPoint()
-            points.append(point)
-            values.append(feature[field])
+        features = [feature for feature in input_layer.getFeatures()]
+        points = np.array([feature.geometry().asPoint() for feature in features])
+        values = np.array([feature[field] for feature in features])
 
-        points = np.array(points)
-        values = np.array(values)
+        # Construct a KD-Tree for the points
+        tree = KDTree(points)
 
-        # Define the grid based on the desired extent and the output cell size
+        # Create output grid
         extent = input_layer.extent()
         min_x, min_y, max_x, max_y = extent.toRectF().getCoords()
-        # Adjust the extent to cover a slightly larger area
-        min_x -= output_cell_size
-        max_y += output_cell_size  # Reverse the order of y-coordinates to avoid mirroring
         x_coords = np.arange(min_x, max_x, output_cell_size)
-        y_coords = np.arange(max_y, min_y, -output_cell_size)  # Reverse the order of y-coordinates
-        xx, yy = np.meshgrid(x_coords, y_coords)
+        y_coords = np.arange(min_y, max_y, output_cell_size)
+        xx, yy = np.meshgrid(x_coords, y_coords[::-1])  # Reverse y_coords to match orientation
 
-        # Log grid information
-        QgsMessageLog.logMessage(f"Grid size: {xx.shape}", 'NaturalNeighbour', level=Qgis.Info)
+        # Initialize arrays for accumulating values
+        c = np.zeros_like(xx)
+        n = np.zeros_like(xx)
 
-        # Perform natural neighbor interpolation using CloughTocher2DInterpolator
-        interpolator = CloughTocher2DInterpolator(points, values)
-        interpolated_values = interpolator(xx, yy)
+        # Iterate over raster positions
+        for i in range(xx.shape[0]):
+            for j in range(xx.shape[1]):
+                # Find the closest site and calculate radius
+                _, indices = tree.query([(xx[i][j], yy[i][j])], k=1)
+                index = indices[0]
+                nearest_point = points[index]
+                r = np.linalg.norm([xx[i][j], yy[i][j]] - nearest_point)
 
-        # Log completion
-        QgsMessageLog.logMessage("Interpolation completed", 'NaturalNeighbour', level=Qgis.Info)
+                # Iterate over nearby raster positions within the radius
+                p_range = np.where((xx - xx[i][j])**2 + (yy - yy[i][j])**2 <= r**2)
+                c[p_range] += values[index]
+                n[p_range] += 1
+
+        # Compute interpolated values
+        with np.errstate(divide='ignore', invalid='ignore'):
+            interpolated_values = np.divide(c, n, out=np.zeros_like(c), where=n != 0)
 
         return interpolated_values
 
-
-
-
-
-
-
     def save_interpolated_raster(self, interpolated_values, output_raster_path, extent, output_cell_size, crs):
-        # Log information
-        QgsMessageLog.logMessage("Saving interpolated raster", 'NaturalNeighbour', level=Qgis.Info)
-
         rows, cols = interpolated_values.shape
-
-        # Log interpolated raster dimensions and content
-        QgsMessageLog.logMessage(f"Interpolated raster dimensions: {rows} rows x {cols} columns", 'NaturalNeighbour', level=Qgis.Info)
-        QgsMessageLog.logMessage(f"Interpolated raster content: {interpolated_values}", 'NaturalNeighbour', level=Qgis.Info)
 
         # Create output raster file
         driver = gdal.GetDriverByName('GTiff')
@@ -150,13 +116,6 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
 
         # Write interpolated values to output raster
         output_band.WriteArray(interpolated_values)
-
-        # Check if the output raster is empty
-        raster_statistics = output_band.GetStatistics(0, 1)
-        self.logger.debug(f"Raster statistics: {raster_statistics}")
-
-        if all(stat == 0 for stat in raster_statistics):
-            self.logger.warning("Output raster is empty")
 
         # Set spatial reference
         srs = osr.SpatialReference()
@@ -170,10 +129,6 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
         # Load the saved raster layer
         output_raster_layer = QgsRasterLayer(output_raster_path, 'Interpolated Raster')
         QgsProject.instance().addMapLayer(output_raster_layer)
-
-        # Log completion
-        QgsMessageLog.logMessage("Raster saved successfully", 'NaturalNeighbour', level=Qgis.Info)
-
 
     def name(self):
         return 'Natural Neighbour'
