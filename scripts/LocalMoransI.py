@@ -90,8 +90,8 @@ class LocalMoransI(QgsProcessingAlgorithm):
         # geometry.
         self.addParameter(QgsProcessingParameterVectorLayer(self.INPUT, 'Input layer', types=[QgsProcessing.TypeVectorPolygon, QgsProcessing.TypeVectorPoint], defaultValue=None))
         self.addParameter(QgsProcessingParameterField(self.VARIABLE, 'Variable X', type=QgsProcessingParameterField.Numeric, parentLayerParameterName=self.INPUT))
-        self.addParameter(QgsProcessingParameterEnum(self.METHOD, 'Method', options = ['Queen contiguity', 'Rook contiguity', 'K Nearest Neighbors', 'Distance Band'], defaultValue=0))
-        self.addParameter(QgsProcessingParameterNumber(self.KNN_DIST, type = QgsProcessingParameterNumber.Integer,description='K Neighbors / Distance threshold (only for KNN / Distance Band methods)', defaultValue = 1, minValue = 1))
+        self.addParameter(QgsProcessingParameterEnum(self.METHOD, 'Method', options = ['Queen contiguity', 'Rook contiguity', 'K Nearest Neighbors', 'Distance Band'], defaultValue=2))
+        self.addParameter(QgsProcessingParameterNumber(self.KNN_DIST, type = QgsProcessingParameterNumber.Integer,description='K Neighbors / Distance threshold (only for KNN / Distance Band methods)', defaultValue = 8, minValue = 1))
         self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, 'Local Morans I', createByDefault=True, supportsAppend=False, defaultValue=None))
 
 
@@ -216,15 +216,14 @@ class LocalMoransI(QgsProcessingAlgorithm):
         fields = layer_source.fields()
         field_names = [field.name() for field in fields]
 
-        data = {
-            field_name: [feature[field_name] for feature in layer_source.getFeatures()] for field_name in field_names
-        }
+        data = {field_name: [feature[field_name] for feature in layer_source.getFeatures()] for field_name in field_names}
 
         geometry = [feature.geometry().asWkt() for feature in layer_source.getFeatures()]
         data['geometry'] = geometry
 
-        gdf = gpd.GeoDataFrame(data, geometry=gpd.GeoSeries.from_wkt(geometry), crs=layer_source.crs().toProj4())
+        gdf = gpd.GeoDataFrame(data, geometry=gpd.array.from_wkt(geometry), crs=layer_source.crs().toProj4())
         return gdf
+
 
 
     def postProcessAlgorithm(self, context, feedback):

@@ -252,15 +252,13 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         try:
             fields = layer_source.fields()
             field_names = [field.name() for field in fields]
-            data = {
-                field_name: [feature[field_name] for feature in layer_source.getFeatures()] for field_name in
-                field_names
-            }
+
+            data = {field_name: [feature[field_name] for feature in layer_source.getFeatures()] for field_name in field_names}
 
             geometry = [feature.geometry().asWkt() for feature in layer_source.getFeatures()]
             data['geometry'] = geometry
 
-            gdf = gpd.GeoDataFrame(data, geometry=gpd.GeoSeries.from_wkt(geometry), crs=layer_source.crs().toProj4())
+            gdf = gpd.GeoDataFrame(data, geometry=gpd.array.from_wkt(geometry), crs=layer_source.crs().toProj4())
             return gdf
 
         except Exception as e:

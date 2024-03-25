@@ -53,7 +53,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             output_raster_path = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
 
             # Perform Sibson interpolation
-            interpolated_values = self.sibson_interpolation(input_layer, field_analysis, output_cell_size)
+            interpolated_values = self.efficient_discrete_sibson_interpolation(input_layer, field_analysis, output_cell_size)
 
             # Write interpolated values to output raster
             self.save_interpolated_raster(interpolated_values, output_raster_path, input_layer.extent(), output_cell_size, input_layer.crs())
@@ -64,7 +64,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             feedback.reportError(f"An error occurred during processing: {e}")
             return {self.OUTPUT: ''}
 
-    def sibson_interpolation(self, input_layer, field, output_cell_size):
+    def efficient_discrete_sibson_interpolation(self, input_layer, field, output_cell_size):
         # Extract points and values from the input layer
         features = [feature for feature in input_layer.getFeatures()]
         points = np.array([feature.geometry().asPoint() for feature in features])
