@@ -1,20 +1,20 @@
 from qgis.core import (
-    Qgis,
-    QgsRasterLayer,
-    QgsProcessingAlgorithm,
-    QgsProcessingParameterVectorLayer,
-    QgsProcessingParameterField,
-    QgsProcessingParameterNumber,
-    QgsProcessingParameterRasterDestination,
-    QgsProcessing,
-    QgsProject,
-    QgsMessageLog
-)
+                    Qgis,
+                    QgsRasterLayer,
+                    QgsProcessingAlgorithm,
+                    QgsProcessingParameterVectorLayer,
+                    QgsProcessingParameterField,
+                    QgsProcessingParameterNumber,
+                    QgsProcessingParameterRasterDestination,
+                    QgsProcessing,
+                    QgsProject,
+                    QgsMessageLog
+                    )
 from qgis.PyQt.QtCore import QCoreApplication
 import os
 import numpy as np
 from osgeo import gdal, osr
-from scipy.spatial import KDTree
+from scipy.spatial import cKDTree  # Ball Tree
 
 # Configure logging
 import logging
@@ -70,15 +70,15 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
         points = np.array([feature.geometry().asPoint() for feature in features])
         values = np.array([feature[field] for feature in features])
 
-        # Construct a KD-Tree for the points
-        tree = KDTree(points)
-
         # Create output grid
         extent = input_layer.extent()
         min_x, min_y, max_x, max_y = extent.toRectF().getCoords()
         x_coords = np.arange(min_x, max_x, output_cell_size)
         y_coords = np.arange(min_y, max_y, output_cell_size)
         xx, yy = np.meshgrid(x_coords, y_coords[::-1])  # Reverse y_coords to match orientation
+
+        # Replace KDTree with Ball Tree
+        tree = cKDTree(points)
 
         # Initialize arrays for accumulating values
         c = np.zeros_like(xx)
