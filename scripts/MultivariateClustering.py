@@ -5,6 +5,7 @@ from qgis.core import (QgsProcessing,
                       QgsProcessingParameterEnum,
                       QgsProcessingParameterNumber,
                       QgsProcessingParameterFeatureSink,
+                      QgsProcessingParameterFeatureSource,
                       QgsVectorLayer,
                       QgsFields,
                       QgsField,
@@ -39,6 +40,7 @@ class MultivariateClustering(QgsProcessingAlgorithm):
     CLUSTERING_METHOD = 'CLUSTERING_METHOD'
     INITIALIZATION_METHOD = 'INITIALIZATION_METHOD'
     NUM_CLUSTERS = 'NUM_CLUSTERS'
+    MASK_LAYER = 'MASK_LAYER'
     OUTPUT_EVALUATION_TABLE = 'OUTPUT_EVALUATION_TABLE'
     EVALUATION_FIELD_NAMES = ['Number of Clusters', 'Pseudo F-statistic']
 
@@ -66,6 +68,7 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterEnum(self.CLUSTERING_METHOD, 'Clustering Method', options=['K means'], defaultValue=0))
         self.addParameter(QgsProcessingParameterEnum(self.INITIALIZATION_METHOD, 'Initialization Method', options=['Optimized seed locations'], defaultValue=0))
         self.addParameter(QgsProcessingParameterNumber(self.NUM_CLUSTERS, 'Number of Clusters', type=QgsProcessingParameterNumber.Double, defaultValue=None, optional=True))
+        self.addParameter(QgsProcessingParameterFeatureSource(self.MASK_LAYER, 'Mask layer', types=[QgsProcessing.TypeVectorPolygon], optional=True, defaultValue=None))
         self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT_EVALUATION_TABLE, 'Output Table for Evaluating Number of Clusters', createByDefault=True, supportsAppend=False, defaultValue=None))
 
     def processAlgorithm(self, parameters, context, feedback):
@@ -73,13 +76,18 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         dest_eval_id = None
 
         try:
-            layer_source, analysis_fields, clustering_method, initialization_method, num_clusters = self.extractParameters(parameters, context)
+            layer_source, analysis_fields, clustering_method, initialization_method, num_clusters, mask_layer = self.extractParameters(parameters, context)
 
             # Print log messages to the Log Messages panel
             QgsMessageLog.logMessage('Starting Multivariate Clustering algorithm', 'Multivariate Clustering', level=Qgis.Info)
 
             # Extract data from the input layer
             data = self.prepareData(layer_source, analysis_fields)
+
+            if mask_layer:
+                # Mask the data using each analysis field
+                for field in analysis_fields:
+                    data = self.maskData(data, mask_layer, field, context)
 
             if num_clusters is not None and num_clusters > 0:
                 # Use the provided number of clusters
@@ -111,13 +119,34 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         # Always return the output layers, even if an exception occurred
         return {self.OUTPUT: dest_id, self.OUTPUT_EVALUATION_TABLE: dest_eval_id}
 
+
+
     def extractParameters(self, parameters, context):
         layer_source = self.parameterAsVectorLayer(parameters, self.INPUT, context)
         analysis_fields = self.parameterAsFields(parameters, self.ANALYSIS_FIELDS, context)
         clustering_method = self.parameterAsEnum(parameters, self.CLUSTERING_METHOD, context)
         initialization_method = self.parameterAsEnum(parameters, self.INITIALIZATION_METHOD, context)
         num_clusters = self.parameterAsDouble(parameters, self.NUM_CLUSTERS, context)
-        return layer_source, analysis_fields, clustering_method, initialization_method, num_clusters
+        mask_layer = self.parameterAsVectorLayer(parameters, self.MASK_LAYER, context)
+
+        return layer_source, analysis_fields, clustering_method, initialization_method, num_clusters, mask_layer
+
+    def maskData(self, data, mask_layer, field, context):
+        try:
+            # Convert mask layer to GeoDataFrame
+            mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
+
+            # Perform spatial join to filter data based on mask layer
+            masked_data = gpd.overlay(data, mask_data, how='intersection')
+
+            # Keep only the original columns from the input data
+            masked_data = masked_data[[field] + ['geometry']]
+
+            return masked_data
+        except Exception as e:
+            QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Local Morans I', Qgis.Critical)
+            return None
+
 
     def determineOptimalClusters(self, data, analysis_fields, initialization_method, feedback):
         clustering_results = self.evaluateNumberOfClusters(data, analysis_fields, initialization_method)
