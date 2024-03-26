@@ -24,19 +24,16 @@ class LocalMoransI(QgsProcessingAlgorithm):
     """
     All Processing algorithms should extend the QgsProcessingAlgorithm
     class.
-
     """
     # Constants used to refer to parameters and outputs. They will be
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
-    
     INPUT = 'INPUT'
     MASK_LAYER = 'MASK_LAYER'
     VARIABLE = 'VARIABLE'
     METHOD = 'METHOD'
     KNN_DIST = 'KNN_DIST'
     OUTPUT = 'OUTPUT'
-
 
     def __init__(self):
         self.dest_id = None
@@ -81,6 +78,7 @@ class LocalMoransI(QgsProcessingAlgorithm):
 
         # Output
         self.handleOutput(parameters, context, data, temp_path, layer_source, randExt)
+        
         return {self.OUTPUT: self.dest_id}
 
     def maskData(self, data, mask_layer, field, context):
@@ -95,10 +93,10 @@ class LocalMoransI(QgsProcessingAlgorithm):
             masked_data = masked_data[[field] + ['geometry']]
 
             return masked_data
+        
         except Exception as e:
             QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Local Morans I', Qgis.Critical)
             return None
-
 
     def prepareData(self, layer_source, field, method, knn_dist, context):
         if isinstance(layer_source, QgsVectorLayer):
@@ -136,8 +134,8 @@ class LocalMoransI(QgsProcessingAlgorithm):
         data['geometry'] = geometry
 
         gdf = gpd.GeoDataFrame(data, geometry=gpd.array.from_wkt(geometry), crs=layer_source.crs().toProj4())
-        return gdf
 
+        return gdf
 
     def createSpatialWeights(self, data, method, knn_dist):
         try:
@@ -155,6 +153,7 @@ class LocalMoransI(QgsProcessingAlgorithm):
                 w = libpysal.weights.distance.DistanceBand.from_dataframe(data, threshold=knn_dist, ids=data.index.tolist())
 
             return w
+        
         except Exception as e:
             QgsMessageLog.logMessage(f"Error creating spatial weights: {str(e)}", 'Local Morans I', Qgis.Critical)
             return None
@@ -208,7 +207,7 @@ class LocalMoransI(QgsProcessingAlgorithm):
         lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        return 'Local Morans I'
+        return 'Local Moran\'s I'
 
     def displayName(self):
         """

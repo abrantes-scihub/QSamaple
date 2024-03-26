@@ -42,7 +42,6 @@ class MultivariateClustering(QgsProcessingAlgorithm):
     NUM_CLUSTERS = 'NUM_CLUSTERS'
     MASK_LAYER = 'MASK_LAYER'
     OUTPUT_EVALUATION_TABLE = 'OUTPUT_EVALUATION_TABLE'
-    EVALUATION_FIELD_NAMES = ['Number of Clusters', 'Pseudo F-statistic']
 
     def __init__(self):
         self.dest_id = None
@@ -69,7 +68,7 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterEnum(self.INITIALIZATION_METHOD, 'Initialization Method', options=['Optimized seed locations'], defaultValue=0))
         self.addParameter(QgsProcessingParameterNumber(self.NUM_CLUSTERS, 'Number of Clusters', type=QgsProcessingParameterNumber.Double, defaultValue=None, optional=True))
         self.addParameter(QgsProcessingParameterFeatureSource(self.MASK_LAYER, 'Mask layer', types=[QgsProcessing.TypeVectorPolygon], optional=True, defaultValue=None))
-        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT_EVALUATION_TABLE, 'Output Table for Evaluating Number of Clusters', createByDefault=True, supportsAppend=False, defaultValue=None))
+        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT_EVALUATION_TABLE, 'Output Table for Evaluating Number of Clusters', createByDefault=False, supportsAppend=False, defaultValue=None))
 
     def processAlgorithm(self, parameters, context, feedback):
         dest_id = None
@@ -100,7 +99,7 @@ class MultivariateClustering(QgsProcessingAlgorithm):
             clustered_data = self.fitKMeans(data, num_clusters, initialization_method, analysis_fields)
 
             # Calculate Calinski-Harabasz pseudo F-statistic
-            ch_score = self.calculateCalinskiHarabaszPseudoFStatistic(clustered_data, analysis_fields)
+            ch_score = self.calculateCalinskiHarabaszPseudoFStatistic(clustered_data, analysis_fields, feedback)
 
             # Print F-statistic value to the Log Messages panel
             QgsMessageLog.logMessage(f'Calinski-Harabasz pseudo F-statistic: {ch_score}', 'Multivariate Clustering', level=Qgis.Info)
@@ -119,8 +118,6 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         # Always return the output layers, even if an exception occurred
         return {self.OUTPUT: dest_id, self.OUTPUT_EVALUATION_TABLE: dest_eval_id}
 
-
-
     def extractParameters(self, parameters, context):
         layer_source = self.parameterAsVectorLayer(parameters, self.INPUT, context)
         analysis_fields = self.parameterAsFields(parameters, self.ANALYSIS_FIELDS, context)
@@ -130,83 +127,6 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         mask_layer = self.parameterAsVectorLayer(parameters, self.MASK_LAYER, context)
 
         return layer_source, analysis_fields, clustering_method, initialization_method, num_clusters, mask_layer
-
-    def maskData(self, data, mask_layer, field, context):
-        try:
-            # Convert mask layer to GeoDataFrame
-            mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
-
-            # Perform spatial join to filter data based on mask layer
-            masked_data = gpd.overlay(data, mask_data, how='intersection')
-
-            # Keep only the original columns from the input data
-            masked_data = masked_data[[field] + ['geometry']]
-
-            return masked_data
-        except Exception as e:
-            QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Local Morans I', Qgis.Critical)
-            return None
-
-
-    def determineOptimalClusters(self, data, analysis_fields, initialization_method, feedback):
-        clustering_results = self.evaluateNumberOfClusters(data, analysis_fields, initialization_method)
-
-        # Retrieve the optimal number of clusters based on the pseudo F-statistic
-        best_num_clusters = self.selectOptimalNumberOfClusters(clustering_results)
-
-        if feedback:
-            feedback.pushInfo(f"Selected optimal number of clusters: {best_num_clusters}")
-
-        return best_num_clusters
-
-    def fitKMeans(self, data, num_clusters, initialization_method, analysis_fields):
-        if num_clusters <= 0:
-            raise ValueError("The number of clusters must be greater than zero.")
-
-        kmeans = KMeans(n_clusters=num_clusters, init='k-means++' if initialization_method == 0 else 'random',
-                        random_state=42)
-        data['Cluster'] = kmeans.fit_predict(data[analysis_fields].values)
-
-        self.logger.info(f"K-means clustering completed with {num_clusters} clusters.")
-
-        return data
-
-    def evaluateNumberOfClusters(self, data, analysis_fields, initialization_method):
-        clustering_results = {}
-        for num_clusters in range(2, 31):
-            clustered_data = self.fitKMeans(data, num_clusters, initialization_method, analysis_fields)
-            ch_score = self.calculateCalinskiHarabaszPseudoFStatistic(clustered_data, analysis_fields)
-            clustering_results[num_clusters] = ch_score
-
-        evaluation_table = pd.DataFrame(list(clustering_results.items()), columns=self.EVALUATION_FIELD_NAMES)
-        return evaluation_table
-
-
-    def selectOptimalNumberOfClusters(self, clustering_results):
-        # Find the number of clusters with the highest Calinski-Harabasz pseudo F-statistic
-        best_num_clusters = clustering_results['Number of Clusters'].iloc[clustering_results['Pseudo F-statistic'].idxmax()]
-
-        return best_num_clusters
-
-    def calculateCalinskiHarabaszPseudoFStatistic(self, clustered_data, analysis_fields):
-        X = clustered_data[analysis_fields].values
-        labels = clustered_data['Cluster'].values
-
-        cluster_means = np.array(
-            [X[labels == cluster].mean(axis=0) for cluster in np.unique(labels)])
-        overall_mean = X.mean(axis=0)
-
-        between_var = np.sum(
-            [np.sum(np.sum((cluster_means[i] - overall_mean) ** 2)) for i in range(len(cluster_means))])
-        within_var = np.sum(
-            [np.sum(np.sum((X[labels == cluster] - cluster_means[i]) ** 2)) for i, cluster in enumerate(np.unique(labels))])
-
-        ch_score = (between_var / (len(np.unique(labels)) - 1)) / (
-                within_var / (len(X) - len(np.unique(labels))))
-
-        self.logger.info(f'Calinski-Harabasz pseudo F-statistic: {ch_score}')
-
-        return ch_score
 
     def prepareData(self, layer_source, analysis_fields):
         try:
@@ -242,6 +162,83 @@ class MultivariateClustering(QgsProcessingAlgorithm):
             logging.exception(f"An error occurred during data preparation: {e}")
             raise
 
+    def maskData(self, data, mask_layer, field, context):
+        try:
+            # Convert mask layer to GeoDataFrame
+            mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
+
+            # Perform spatial join to filter data based on mask layer
+            masked_data = gpd.overlay(data, mask_data, how='intersection')
+
+            # Keep only the original columns from the input data
+            masked_data = masked_data[[field] + ['geometry']]
+
+            return masked_data
+        except Exception as e:
+            QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Local Morans I', Qgis.Critical)
+            return None
+
+    def determineOptimalClusters(self, data, analysis_fields, initialization_method, feedback=None):
+        clustering_results = self.evaluateNumberOfClusters(data, analysis_fields, initialization_method)
+
+        # Retrieve the optimal number of clusters based on the pseudo F-statistic
+        best_num_clusters = self.selectOptimalNumberOfClusters(clustering_results)
+
+        if feedback:
+            feedback.pushInfo(f"Selected optimal number of clusters: {best_num_clusters}")
+
+        return best_num_clusters
+
+    def evaluateNumberOfClusters(self, data, analysis_fields, initialization_method):
+        clustering_results = {}
+        for num_clusters in range(2, 31):
+            clustered_data = self.fitKMeans(data, num_clusters, initialization_method, analysis_fields)
+            ch_score = self.calculateCalinskiHarabaszPseudoFStatistic(clustered_data, analysis_fields)
+            clustering_results[num_clusters] = ch_score
+
+        evaluation_table = pd.DataFrame(list(clustering_results.items()), columns=['Number of Clusters', 'Pseudo F-statistic'])
+
+        return evaluation_table
+
+    def fitKMeans(self, data, num_clusters, initialization_method, analysis_fields):
+        if num_clusters <= 0:
+            raise ValueError("The number of clusters must be greater than zero.")
+
+        kmeans = KMeans(n_clusters=num_clusters, init='k-means++' if initialization_method == 0 else 'random',
+                        random_state=42)
+        data['Cluster'] = kmeans.fit_predict(data[analysis_fields].values)
+
+        self.logger.info(f"K-means clustering completed with {num_clusters} clusters.")
+
+        return data
+
+    def calculateCalinskiHarabaszPseudoFStatistic(self, clustered_data, analysis_fields, feedback=None):
+        X = clustered_data[analysis_fields].values
+        labels = clustered_data['Cluster'].values
+
+        cluster_means = np.array(
+            [X[labels == cluster].mean(axis=0) for cluster in np.unique(labels)])
+        overall_mean = X.mean(axis=0)
+
+        between_var = np.sum(
+            [np.sum(np.sum((cluster_means[i] - overall_mean) ** 2)) for i in range(len(cluster_means))])
+        within_var = np.sum(
+            [np.sum(np.sum((X[labels == cluster] - cluster_means[i]) ** 2)) for i, cluster in enumerate(np.unique(labels))])
+
+        ch_score = (between_var / (len(np.unique(labels)) - 1)) / (
+                within_var / (len(X) - len(np.unique(labels))))
+
+        if feedback:
+            feedback.pushInfo(f"Calinski-Harabasz pseudo F-statistic: {ch_score}")
+
+        return ch_score
+
+    def selectOptimalNumberOfClusters(self, clustering_results):
+        # Find the number of clusters with the highest Calinski-Harabasz pseudo F-statistic
+        best_num_clusters = clustering_results['Number of Clusters'].iloc[clustering_results['Pseudo F-statistic'].idxmax()]
+
+        return best_num_clusters
+
     def handleEvaluationTable(self, parameters, context, evaluation_table, temp_path):
         try:
             source_layer = self.parameterAsVectorLayer(parameters, self.INPUT, context)
@@ -270,10 +267,11 @@ class MultivariateClustering(QgsProcessingAlgorithm):
                 sink.addFeature(feature)
 
             return dest_id
+        
         except Exception as e:
             QgsMessageLog.logMessage(f'Error handling evaluation table: {e}', 'Multivariate Clustering',
                                      level=Qgis.Critical)
-            return 'TEMPORARY_OUTPUT_EVALUATION_TABLE'  # Use a different name for the temporary evaluation table
+            return self.OUTPUT_EVALUATION_TABLE
 
     def handleOutput(self, parameters, context, data, temp_path, layer_source):
         try:
@@ -301,24 +299,10 @@ class MultivariateClustering(QgsProcessingAlgorithm):
                 sink.addFeature(feature)
 
             return dest_id
+        
         except Exception as e:
             QgsMessageLog.logMessage(f'Error handling output layer: {e}', 'Multivariate Clustering', level=Qgis.Critical)
-            return 'TEMPORARY_OUTPUT_LAYER'  # Use a different name for the temporary layer
-        
-    def getLayerCRS(self, layer):
-        """
-        Get the CRS of the given layer.
-
-        Parameters:
-        - layer: QgsVectorLayer or None
-
-        Returns:
-        - QgsCoordinateReferenceSystem or None
-        """
-        if layer:
-            return layer.crs().authid()
-        else:
-            return None
+            return self.OUTPUT
 
     def name(self):
         return 'Multivariate Clustering'
