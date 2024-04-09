@@ -84,7 +84,7 @@ class LocalMoransI(QgsProcessingAlgorithm):
     def maskData(self, data, mask_layer, field, context):
         try:
             # Convert mask layer to GeoDataFrame
-            mask_data = self.qgis_vector_layer_to_geodataframe(mask_layer)
+            mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
 
             # Perform spatial join to filter data based on mask layer
             masked_data = gpd.overlay(data, mask_data, how='intersection')
@@ -109,7 +109,7 @@ class LocalMoransI(QgsProcessingAlgorithm):
         if not layer.isValid():
             raise Exception('Failed to create QgsVectorLayer from input')
 
-        data = self.qgis_vector_layer_to_geodataframe(layer)
+        data = self.qgisVectorLayerToGeoDataFrame(layer)
 
         polygon_column = None  # Initialize polygon_column variable
 
@@ -124,7 +124,7 @@ class LocalMoransI(QgsProcessingAlgorithm):
 
         return data, temp_path, polygon_column, randExt  # Return randExt
 
-    def qgis_vector_layer_to_geodataframe(self, layer_source):
+    def qgisVectorLayerToGeoDataFrame(self, layer_source):
         fields = layer_source.fields()
         field_names = [field.name() for field in fields]
 
