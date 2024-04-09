@@ -45,16 +45,16 @@ class LocalMoransI(QgsProcessingAlgorithm):
         with some other properties.
         """
         self.addParameter(QgsProcessingParameterVectorLayer(self.INPUT, 'Input layer', types=[QgsProcessing.TypeVectorPolygon, QgsProcessing.TypeVectorPoint], defaultValue=None))
-        self.addParameter(QgsProcessingParameterFeatureSource(self.MASK_LAYER, 'Mask layer', types=[QgsProcessing.TypeVectorPolygon], optional=True, defaultValue=None))
         self.addParameter(QgsProcessingParameterField(self.VARIABLE, 'Variable X', type=QgsProcessingParameterField.Numeric, parentLayerParameterName=self.INPUT))
+        self.addParameter(QgsProcessingParameterFeatureSource(self.MASK_LAYER, 'Mask layer', types=[QgsProcessing.TypeVectorPolygon], optional=True, defaultValue=None))
         self.addParameter(QgsProcessingParameterEnum(self.METHOD, 'Method', options = ['Queen contiguity', 'Rook contiguity', 'K Nearest Neighbors', 'Distance Band'], defaultValue=2))
         self.addParameter(QgsProcessingParameterNumber(self.KNN_DIST, type = QgsProcessingParameterNumber.Integer,description='K Neighbors / Distance threshold (only for KNN / Distance Band methods)', defaultValue = 8, minValue = 1))
         self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, 'Local Morans I', createByDefault=True, supportsAppend=False, defaultValue=None))
 
     def processAlgorithm(self, parameters, context, feedback):
         layer_source = self.parameterAsVectorLayer(parameters, self.INPUT, context)
-        mask_layer = self.parameterAsVectorLayer(parameters, self.MASK_LAYER, context)  # New parameter retrieval
         field = self.parameterAsString(parameters, self.VARIABLE, context)
+        mask_layer = self.parameterAsVectorLayer(parameters, self.MASK_LAYER, context)  # New parameter retrieval
         method = self.parameterAsInt(parameters, self.METHOD, context)
         knn_dist = self.parameterAsDouble(parameters, self.KNN_DIST, context)
 
