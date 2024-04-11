@@ -5,13 +5,19 @@ from qgis.core import (
                     QgsProcessingParameterVectorLayer,
                     QgsProcessingParameterField,
                     QgsProcessingParameterNumber,
+                    QgsProcessingParameterFeatureSource,
                     QgsProcessingParameterRasterDestination,
                     QgsProcessing,
                     QgsProject,
-                    QgsMessageLog
+                    QgsMessageLog,
+                    QgsVectorLayer,
+                    QgsPointXY,
+                    QgsGeometry,
+                    QgsWkbTypes
                     )
 from qgis.PyQt.QtCore import QCoreApplication
 import os
+import geopandas as gpd
 import numpy as np
 from osgeo import gdal, osr
 from scipy.spatial import cKDTree  # Ball Tree
@@ -26,6 +32,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
     INPUT = 'INPUT'
     FIELD_ANALYSIS = 'FIELD_ANALYSIS'
     OUTPUT_CELL_SIZE = 'OUTPUT_CELL_SIZE'
+    MASK_LAYER = 'MASK_LAYER'
     OUTPUT = 'OUTPUT'
 
     def __init__(self):
@@ -35,13 +42,12 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
 
     def configure_logging(self):
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-        logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-        logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterVectorLayer(self.INPUT, self.tr('Input Vector Layer'), types=[QgsProcessing.TypeVectorPoint]))
         self.addParameter(QgsProcessingParameterField(self.FIELD_ANALYSIS, self.tr('Field Analysis'), parentLayerParameterName=self.INPUT, type=QgsProcessingParameterField.Numeric, allowMultiple=False))
-        self.addParameter(QgsProcessingParameterNumber(self.OUTPUT_CELL_SIZE, self.tr('Output Cell Size'), type=QgsProcessingParameterNumber.Double, minValue=0.0))
+        self.addParameter(QgsProcessingParameterNumber(self.OUTPUT_CELL_SIZE, self.tr('Output Cell Size'), type=QgsProcessingParameterNumber.Double, minValue=0.0, defaultValue=3.0))
+        self.addParameter(QgsProcessingParameterFeatureSource(self.MASK_LAYER, self.tr('Mask Layer'), types=[QgsProcessing.TypeVectorPolygon], optional=True, defaultValue=None))
         self.addParameter(QgsProcessingParameterRasterDestination(self.OUTPUT, self.tr('Output Raster')))
 
     def processAlgorithm(self, parameters, context, feedback):
@@ -50,10 +56,14 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             input_layer = self.parameterAsVectorLayer(parameters, self.INPUT, context)
             field_analysis = self.parameterAsString(parameters, self.FIELD_ANALYSIS, context)
             output_cell_size = self.parameterAsDouble(parameters, self.OUTPUT_CELL_SIZE, context)
+            mask_layer = self.parameterAsVectorLayer(parameters, self.MASK_LAYER, context)
             output_raster_path = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
 
             # Perform Sibson interpolation
-            interpolated_values = self.efficient_discrete_sibson_interpolation(input_layer, field_analysis, output_cell_size)
+            if mask_layer:
+                interpolated_values = self.efficientDiscreteSibsonInterpolation(input_layer, field_analysis, output_cell_size, mask_layer)
+            else:
+                interpolated_values = self.efficientDiscreteSibsonInterpolation(input_layer, field_analysis, output_cell_size)
 
             # Write interpolated values to output raster
             self.save_interpolated_raster(interpolated_values, output_raster_path, input_layer.extent(), output_cell_size, input_layer.crs())
@@ -64,14 +74,71 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             feedback.reportError(f"An error occurred during processing: {e}")
             return {self.OUTPUT: ''}
 
-    def efficient_discrete_sibson_interpolation(self, input_layer, field, output_cell_size):
-        # Extract points and values from the input layer
-        features = [feature for feature in input_layer.getFeatures()]
+    def apply_mask(self, data, mask_layer, field, context):
+        try:
+            # Convert mask layer to GeoDataFrame
+            mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
+
+            # Perform spatial join to filter data based on mask layer
+            masked_data = gpd.overlay(data, mask_data, how='intersection')
+
+            # Keep only the original columns from the input data
+            masked_data = masked_data[[field] + ['geometry']]
+
+            return masked_data
+
+        except Exception as e:
+            QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Natural Neighbour', Qgis.Critical)
+            return None
+
+            
+    def qgisVectorLayerToGeoDataFrame(self, input_layer):
+        try:
+            # Retrieve field names from the input layer
+            fields = input_layer.fields()
+            field_names = [field.name() for field in fields]
+
+            # Extract attribute values for each feature in the input layer
+            data = {field_name: [] for field_name in field_names}
+            for feature in input_layer.getFeatures():
+                for field_name in field_names:
+                    data[field_name].append(feature[field_name])
+
+            # Convert the geometry of each feature to WKT format
+            geometry = [feature.geometry().asWkt() for feature in input_layer.getFeatures()]
+
+            # Create a dictionary with attribute values and geometry
+            data['geometry'] = geometry
+
+            # Create a GeoDataFrame using the dictionary and the WKT geometry,
+            # specifying the coordinate reference system (CRS)
+            gdf = gpd.GeoDataFrame(data, geometry=gpd.array.from_wkt(geometry), crs=input_layer.crs().toProj4())
+
+            return gdf
+        except Exception as e:
+            # Log the error message
+            QgsMessageLog.logMessage(f"Error in qgisVectorLayerToGeoDataFrame: {str(e)}", 'Natural Neighbour', Qgis.Critical)
+            return None
+
+
+    def efficientDiscreteSibsonInterpolation(self, input_layer, field, output_cell_size, mask_layer=None):
+        # Define the data source based on whether mask_layer is provided
+        if mask_layer and mask_layer.isValid():
+            data_source = mask_layer
+        else:
+            data_source = input_layer
+
+        # Extract points and values from the data source
+        features = [feature for feature in data_source.getFeatures()]
         points = np.array([feature.geometry().asPoint() for feature in features])
         values = np.array([feature[field] for feature in features])
 
-        # Create output grid
-        extent = input_layer.extent()
+        # Define the extent based on the mask_layer if available, otherwise use the input_layer extent
+        if mask_layer and mask_layer.isValid():
+            extent = mask_layer.extent()
+        else:
+            extent = input_layer.extent()
+
         min_x, min_y, max_x, max_y = extent.toRectF().getCoords()
         x_coords = np.arange(min_x, max_x, output_cell_size)
         y_coords = np.arange(min_y, max_y, output_cell_size)
@@ -103,6 +170,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             interpolated_values = np.divide(c, n, out=np.zeros_like(c), where=n != 0)
 
         return interpolated_values
+
 
     def save_interpolated_raster(self, interpolated_values, output_raster_path, extent, output_cell_size, crs):
         rows, cols = interpolated_values.shape
