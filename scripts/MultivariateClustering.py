@@ -75,13 +75,13 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         dest_eval_id = None
 
         try:
-            layer_source, analysis_fields, clustering_method, initialization_method, num_clusters, mask_layer = self.extractParameters(parameters, context)
+            input_layer, analysis_fields, clustering_method, initialization_method, num_clusters, mask_layer = self.extractParameters(parameters, context)
 
             # Print log messages to the Log Messages panel
             QgsMessageLog.logMessage('Starting Multivariate Clustering algorithm', 'Multivariate Clustering', level=Qgis.Info)
 
             # Extract data from the input layer
-            data = self.prepareData(layer_source, analysis_fields)
+            data = self.prepareData(input_layer, analysis_fields)
 
             if mask_layer:
                 # Mask the data using each analysis field
@@ -105,7 +105,7 @@ class MultivariateClustering(QgsProcessingAlgorithm):
             QgsMessageLog.logMessage(f'Calinski-Harabasz pseudo F-statistic: {ch_score}', 'Multivariate Clustering', level=Qgis.Info)
 
             # Handle Output
-            dest_id = self.handleOutput(parameters, context, clustered_data, tempfile.gettempdir(), layer_source)
+            dest_id = self.handleOutput(parameters, context, clustered_data, tempfile.gettempdir(), input_layer)
 
             # Create and return the evaluation table
             evaluation_table = self.evaluateNumberOfClusters(data, analysis_fields, initialization_method)
@@ -119,21 +119,21 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         return {self.OUTPUT: dest_id, self.OUTPUT_EVALUATION_TABLE: dest_eval_id}
 
     def extractParameters(self, parameters, context):
-        layer_source = self.parameterAsVectorLayer(parameters, self.INPUT, context)
+        input_layer = self.parameterAsVectorLayer(parameters, self.INPUT, context)
         analysis_fields = self.parameterAsFields(parameters, self.ANALYSIS_FIELDS, context)
         clustering_method = self.parameterAsEnum(parameters, self.CLUSTERING_METHOD, context)
         initialization_method = self.parameterAsEnum(parameters, self.INITIALIZATION_METHOD, context)
         num_clusters = self.parameterAsDouble(parameters, self.NUM_CLUSTERS, context)
         mask_layer = self.parameterAsVectorLayer(parameters, self.MASK_LAYER, context)
 
-        return layer_source, analysis_fields, clustering_method, initialization_method, num_clusters, mask_layer
+        return input_layer, analysis_fields, clustering_method, initialization_method, num_clusters, mask_layer
 
-    def prepareData(self, layer_source, analysis_fields):
+    def prepareData(self, input_layer, analysis_fields):
         try:
-            if isinstance(layer_source, QgsVectorLayer):
-                layer = layer_source
+            if isinstance(input_layer, QgsVectorLayer):
+                layer = input_layer
             else:
-                layer = QgsVectorLayer(layer_source, self.TEMPORARY_LAYER_NAME, 'ogr')
+                layer = QgsVectorLayer(input_layer, 'temp_layer', 'ogr')
 
             if not layer.isValid():
                 raise Exception('Failed to create QgsVectorLayer from input')
@@ -145,17 +145,17 @@ class MultivariateClustering(QgsProcessingAlgorithm):
             self.logger.error(f"An error occurred during data preparation: {e}")
             raise
 
-    def qgisVectorLayerToGeoDataFrame(self, layer_source):
+    def qgisVectorLayerToGeoDataFrame(self, input_layer):
         try:
-            fields = layer_source.fields()
+            fields = input_layer.fields()
             field_names = [field.name() for field in fields]
 
-            data = {field_name: [feature[field_name] for feature in layer_source.getFeatures()] for field_name in field_names}
+            data = {field_name: [feature[field_name] for feature in input_layer.getFeatures()] for field_name in field_names}
 
-            geometry = [feature.geometry().asWkt() for feature in layer_source.getFeatures()]
+            geometry = [feature.geometry().asWkt() for feature in input_layer.getFeatures()]
             data['geometry'] = geometry
 
-            gdf = gpd.GeoDataFrame(data, geometry=gpd.array.from_wkt(geometry), crs=layer_source.crs().toProj4())
+            gdf = gpd.GeoDataFrame(data, geometry=gpd.array.from_wkt(geometry), crs=input_layer.crs().toProj4())
             return gdf
 
         except Exception as e:
@@ -174,6 +174,7 @@ class MultivariateClustering(QgsProcessingAlgorithm):
             masked_data = masked_data[[field] + ['geometry']]
 
             return masked_data
+        
         except Exception as e:
             QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Local Morans I', Qgis.Critical)
             return None
@@ -273,7 +274,7 @@ class MultivariateClustering(QgsProcessingAlgorithm):
                                      level=Qgis.Critical)
             return self.OUTPUT_EVALUATION_TABLE
 
-    def handleOutput(self, parameters, context, data, temp_path, layer_source):
+    def handleOutput(self, parameters, context, data, temp_path, input_layer):
         try:
             rand_ext = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
             out_path = os.path.join(tempfile.gettempdir(), f'temp_clustered_{rand_ext}.shp')
@@ -283,16 +284,16 @@ class MultivariateClustering(QgsProcessingAlgorithm):
 
             # Create a QgsVectorLayer using the saved shapefile
             vector_layer = QgsVectorLayer(out_path, "Clustered Layer", "ogr")
-            vector_layer.setCrs(layer_source.crs())
+            vector_layer.setCrs(input_layer.crs())
 
             # Use the source layer's fields when creating the sink
-            fields = layer_source.fields()
+            fields = input_layer.fields()
 
             # Add the 'Cluster' field to the fields
             fields.append(QgsField('Cluster', QVariant.Int))
 
             (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context, fields,
-                                                  QgsWkbTypes.Point, layer_source.crs())
+                                                  QgsWkbTypes.Point, input_layer.crs())
 
             # Add features directly from the vector layer
             for feature in vector_layer.getFeatures():

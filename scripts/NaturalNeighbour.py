@@ -10,10 +10,7 @@ from qgis.core import (
                     QgsProcessing,
                     QgsProject,
                     QgsMessageLog,
-                    QgsVectorLayer,
-                    QgsPointXY,
-                    QgsGeometry,
-                    QgsWkbTypes
+                    QgsVectorLayer
                     )
 from qgis.PyQt.QtCore import QCoreApplication
 import os
@@ -59,14 +56,17 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             mask_layer = self.parameterAsVectorLayer(parameters, self.MASK_LAYER, context)
             output_raster_path = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
 
+            # Extract data from the input layer
+            data = self.prepareData(input_layer, field_analysis)
+
             # Perform Sibson interpolation
             if mask_layer:
-                interpolated_values = self.efficientDiscreteSibsonInterpolation(input_layer, field_analysis, output_cell_size, mask_layer)
-            else:
-                interpolated_values = self.efficientDiscreteSibsonInterpolation(input_layer, field_analysis, output_cell_size)
+                data = self.maskData(data, mask_layer, field_analysis, context)
+
+            interpolated_values = self.efficientDiscreteSibsonInterpolation(data, field_analysis, output_cell_size)
 
             # Write interpolated values to output raster
-            self.save_interpolated_raster(interpolated_values, output_raster_path, input_layer.extent(), output_cell_size, input_layer.crs())
+            self.saveInterpolatedRaster(interpolated_values, output_raster_path, data.total_bounds, output_cell_size, input_layer.crs())
 
             return {self.OUTPUT: output_raster_path}
 
@@ -74,23 +74,23 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             feedback.reportError(f"An error occurred during processing: {e}")
             return {self.OUTPUT: ''}
 
-    def apply_mask(self, data, mask_layer, field, context):
+    def prepareData(self, input_layer, field_analysis):
         try:
-            # Convert mask layer to GeoDataFrame
-            mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
+            if isinstance(input_layer, QgsVectorLayer):
+                layer = input_layer
+            else:
+                layer = QgsVectorLayer(input_layer, 'temp_layer', 'ogr')
 
-            # Perform spatial join to filter data based on mask layer
-            masked_data = gpd.overlay(data, mask_data, how='intersection')
+            if not layer.isValid():
+                raise Exception('Failed to create QgsVectorLayer from input')
 
-            # Keep only the original columns from the input data
-            masked_data = masked_data[[field] + ['geometry']]
-
-            return masked_data
-
+            data = self.qgisVectorLayerToGeoDataFrame(layer)
+            
+            return data
+        
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Natural Neighbour', Qgis.Critical)
+            QgsMessageLog.logMessage(f"Error preparing data: {str(e)}", 'Natural Neighbour', Qgis.Critical)
             return None
-
             
     def qgisVectorLayerToGeoDataFrame(self, input_layer):
         try:
@@ -99,10 +99,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             field_names = [field.name() for field in fields]
 
             # Extract attribute values for each feature in the input layer
-            data = {field_name: [] for field_name in field_names}
-            for feature in input_layer.getFeatures():
-                for field_name in field_names:
-                    data[field_name].append(feature[field_name])
+            data = {field_name: [feature[field_name] for feature in input_layer.getFeatures()] for field_name in field_names}
 
             # Convert the geometry of each feature to WKT format
             geometry = [feature.geometry().asWkt() for feature in input_layer.getFeatures()]
@@ -120,26 +117,32 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             QgsMessageLog.logMessage(f"Error in qgisVectorLayerToGeoDataFrame: {str(e)}", 'Natural Neighbour', Qgis.Critical)
             return None
 
+    def maskData(self, data, mask_layer, field, context):
+        try:
+            # Convert mask layer to GeoDataFrame
+            mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
 
-    def efficientDiscreteSibsonInterpolation(self, input_layer, field, output_cell_size, mask_layer=None):
-        # Define the data source based on whether mask_layer is provided
-        if mask_layer and mask_layer.isValid():
-            data_source = mask_layer
-        else:
-            data_source = input_layer
+            # Perform spatial join to filter data based on mask layer
+            masked_data = gpd.overlay(data, mask_data, how='intersection')
 
+            # Keep only the original columns from the input data
+            masked_data = masked_data[[field] + ['geometry']]
+            QgsMessageLog.logMessage(f"Masked data: {masked_data}", 'Natural Neighbour', Qgis.Info)
+
+            return masked_data
+
+        except Exception as e:
+            QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Natural Neighbour', Qgis.Critical)
+            return None
+
+    def efficientDiscreteSibsonInterpolation(self, data, field, output_cell_size):
         # Extract points and values from the data source
-        features = [feature for feature in data_source.getFeatures()]
-        points = np.array([feature.geometry().asPoint() for feature in features])
-        values = np.array([feature[field] for feature in features])
+        points = np.column_stack((data.geometry.x, data.geometry.y))
+        values = np.array(data[field])
 
-        # Define the extent based on the mask_layer if available, otherwise use the input_layer extent
-        if mask_layer and mask_layer.isValid():
-            extent = mask_layer.extent()
-        else:
-            extent = input_layer.extent()
-
-        min_x, min_y, max_x, max_y = extent.toRectF().getCoords()
+        # Calculate the extent based on the CRS of the input layer
+        extent = data.total_bounds
+        min_x, min_y, max_x, max_y = extent
         x_coords = np.arange(min_x, max_x, output_cell_size)
         y_coords = np.arange(min_y, max_y, output_cell_size)
         xx, yy = np.meshgrid(x_coords, y_coords[::-1])  # Reverse y_coords to match orientation
@@ -154,7 +157,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
         # Iterate over raster positions
         for i in range(xx.shape[0]):
             for j in range(xx.shape[1]):
-                # Find the closest site and calculate radius
+                # Find the closest site and calculate the radius
                 _, indices = tree.query([(xx[i][j], yy[i][j])], k=1)
                 index = indices[0]
                 nearest_point = points[index]
@@ -171,14 +174,13 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
 
         return interpolated_values
 
-
-    def save_interpolated_raster(self, interpolated_values, output_raster_path, extent, output_cell_size, crs):
+    def saveInterpolatedRaster(self, interpolated_values, output_raster_path, extent, output_cell_size, crs):
         rows, cols = interpolated_values.shape
 
         # Create output raster file
         driver = gdal.GetDriverByName('GTiff')
         output_raster = driver.Create(output_raster_path, cols, rows, 1, gdal.GDT_Float32)
-        output_raster.SetGeoTransform((extent.xMinimum(), output_cell_size, 0, extent.yMaximum(), 0, -output_cell_size))
+        output_raster.SetGeoTransform((extent[0], output_cell_size, 0, extent[3], 0, -output_cell_size))
         output_band = output_raster.GetRasterBand(1)
         output_band.SetNoDataValue(np.nan)
 
@@ -197,6 +199,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
         # Load the saved raster layer
         output_raster_layer = QgsRasterLayer(output_raster_path, 'Interpolated Raster')
         QgsProject.instance().addMapLayer(output_raster_layer)
+
 
     def name(self):
         return 'Natural Neighbour'

@@ -52,13 +52,13 @@ class LocalMoransI(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, 'Local Morans I', createByDefault=True, supportsAppend=False, defaultValue=None))
 
     def processAlgorithm(self, parameters, context, feedback):
-        layer_source = self.parameterAsVectorLayer(parameters, self.INPUT, context)
+        input_layer = self.parameterAsVectorLayer(parameters, self.INPUT, context)
         field = self.parameterAsString(parameters, self.VARIABLE, context)
         mask_layer = self.parameterAsVectorLayer(parameters, self.MASK_LAYER, context)  # New parameter retrieval
         method = self.parameterAsInt(parameters, self.METHOD, context)
         knn_dist = self.parameterAsDouble(parameters, self.KNN_DIST, context)
 
-        data, temp_path, polygon_column, randExt = self.prepareData(layer_source, field, method, knn_dist, context)
+        data, temp_path, polygon_column, randExt = self.prepareData(input_layer, field, method, knn_dist, context)
 
         if mask_layer:  # Check if mask layer is provided
             data = self.maskData(data, mask_layer, field, context)
@@ -70,14 +70,14 @@ class LocalMoransI(QgsProcessingAlgorithm):
         local_moran = self.calculateMoransI(y, w)
 
         # If Local morans was calculated with centroids, change dataframe back to polygons
-        if layer_source.geometryType() == 2 and (method == 2 or method == 3): 
+        if input_layer.geometryType() == 2 and (method == 2 or method == 3): 
             data['geometry'] = polygon_column
 
         # Join results
         data = self.joinResults(data, local_moran)
 
         # Output
-        self.handleOutput(parameters, context, data, temp_path, layer_source, randExt)
+        self.handleOutput(parameters, context, data, temp_path, input_layer, randExt)
         
         return {self.OUTPUT: self.dest_id}
 
@@ -98,13 +98,13 @@ class LocalMoransI(QgsProcessingAlgorithm):
             QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Local Morans I', Qgis.Critical)
             return None
 
-    def prepareData(self, layer_source, field, method, knn_dist, context):
-        if isinstance(layer_source, QgsVectorLayer):
+    def prepareData(self, input_layer, field, method, knn_dist, context):
+        if isinstance(input_layer, QgsVectorLayer):
             # Handle QgsVectorLayer object
-            layer = layer_source
+            layer = input_layer
         else:
             # Handle layer source string (shapefile path or temporary layer source)
-            layer = QgsVectorLayer(layer_source, 'temporary_layer', 'ogr')
+            layer = QgsVectorLayer(input_layer, 'temporary_layer', 'ogr')
 
         if not layer.isValid():
             raise Exception('Failed to create QgsVectorLayer from input')
@@ -124,16 +124,16 @@ class LocalMoransI(QgsProcessingAlgorithm):
 
         return data, temp_path, polygon_column, randExt  # Return randExt
 
-    def qgisVectorLayerToGeoDataFrame(self, layer_source):
-        fields = layer_source.fields()
+    def qgisVectorLayerToGeoDataFrame(self, input_layer):
+        fields = input_layer.fields()
         field_names = [field.name() for field in fields]
 
-        data = {field_name: [feature[field_name] for feature in layer_source.getFeatures()] for field_name in field_names}
+        data = {field_name: [feature[field_name] for feature in input_layer.getFeatures()] for field_name in field_names}
 
-        geometry = [feature.geometry().asWkt() for feature in layer_source.getFeatures()]
+        geometry = [feature.geometry().asWkt() for feature in input_layer.getFeatures()]
         data['geometry'] = geometry
 
-        gdf = gpd.GeoDataFrame(data, geometry=gpd.array.from_wkt(geometry), crs=layer_source.crs().toProj4())
+        gdf = gpd.GeoDataFrame(data, geometry=gpd.array.from_wkt(geometry), crs=input_layer.crs().toProj4())
 
         return gdf
 
@@ -173,11 +173,11 @@ class LocalMoransI(QgsProcessingAlgorithm):
 
         return data
 
-    def handleOutput(self, parameters, context, data, temp_path, layer_source, randExt):
+    def handleOutput(self, parameters, context, data, temp_path, input_layer, randExt):
         out_path = os.path.join(tempfile.gettempdir(), f'temp_lmi_{randExt}.shp')
         data.to_file(out_path)
         vector_layer = QgsVectorLayer(out_path, "Local Morans I", "ogr")
-        vector_layer.setCrs(layer_source.crs())
+        vector_layer.setCrs(input_layer.crs())
 
         source = vector_layer
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context, source.fields(), source.wkbType(), source.sourceCrs())
