@@ -24,6 +24,7 @@ import pandas as pd
 import logging
 import random
 import string
+from qgis.PyQt.QtGui import QIcon
 
 ####################################################################################################
 #CLASS##################### The main class for processing the algorithms ###########################
@@ -61,7 +62,7 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         # Extract parameters
         layer_source, measured_field, estimated_field, case_field = self.extractParameters(parameters, context)
 
-        # First call to prepareData
+        # Prepare data
         data = self.prepareData(layer_source, measured_field, estimated_field, case_field)
 
         # Calculate accuracy metrics
@@ -221,8 +222,6 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         return AccuracyMetrics()
 
     def icon(self):
-        from qgis.PyQt.QtGui import QIcon
-        import os
         pluginPath = os.path.dirname(__file__)
         return QIcon(os.path.join(pluginPath, 'styles', 'icon.png'))
 
@@ -237,17 +236,8 @@ class AccuracyMetricsUtils:
     @staticmethod
     def calculateError(self, data, measured_field, estimated_field):
         try:
-            # Log information about the data
-            QgsMessageLog.logMessage(f"Type of data: {type(data)}", 'Accuracy Metrics', Qgis.Info)
-            QgsMessageLog.logMessage(f"Columns of data: {data.columns}", 'Accuracy Metrics', Qgis.Info)
-            QgsMessageLog.logMessage(f"Structure of data: {data.head()}", 'Accuracy Metrics', Qgis.Info)
-
-            # Calculate the error
+            # Calculate the Error
             data['Error'] = data[measured_field] - data[estimated_field]
-            
-            # Add debug messages
-            QgsMessageLog.logMessage(f"Type of 'Error' column: {data['Error'].dtype}", 'Accuracy Metrics', Qgis.Info)
-            QgsMessageLog.logMessage(f"Unique values in 'Error' column: {data['Error'].unique()}", 'Accuracy Metrics', Qgis.Info)
 
             return data
 
@@ -261,6 +251,7 @@ class AccuracyMetricsUtils:
         Calculate the Absolute Error.
         """
         data['Absolute Error'] = np.abs(data['Error'])
+
         return data
     
     @staticmethod
@@ -269,6 +260,7 @@ class AccuracyMetricsUtils:
         Calculate the Relative Error.
         """
         data['Relative Error'] = data['Error'] / data[measured_field]
+
         return data
 
     @staticmethod
@@ -287,13 +279,13 @@ class AccuracyMetricsUtils:
         try:
             if case_field is not None:
                 # Use the field calculator approach with expressions for grouped mean absolute errors
-                expression = f"mean(\"Error\", group_by:=\"{case_field}\")"
-                grouped_data = data.groupby(case_field, as_index=False).agg({'Error': 'mean'}).rename(columns={'Error': 'Mean Absolute Error'})
+                expression = f"mean(\"Absolute Error\", group_by:=\"{case_field}\")"
+                grouped_data = data.groupby(case_field, as_index=False).agg({'Absolute Error': 'mean'}).rename(columns={'Absolute Error': 'Mean Absolute Error'})
                 data = pd.merge(data, grouped_data, on=case_field, how='left')
             else:
                 # Calculate Mean Absolute Error for the entire dataset
-                data['Error'] = pd.to_numeric(data['Error'], errors='coerce')  # Convert to numeric, coerce errors to NaN
-                data['Mean Absolute Error'] = np.abs(data['Error']).mean()
+                data['Absolute Error'] = pd.to_numeric(data['Absolute Error'], errors='coerce')  # Convert to numeric, coerce errors to NaN
+                data['Mean Absolute Error'] = np.abs(data['Absolute Error']).mean()
 
             return data
 

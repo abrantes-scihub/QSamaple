@@ -26,7 +26,6 @@ __author__ = 'Tales Abrantes'
 __date__ = '2023-05-23'
 __copyright__ = '(C) 2024 by Tales Abrantes'
 
-
 __revision__ = '$Format:%H$'
 
 from qgis.core import QgsProcessingProvider
@@ -35,7 +34,7 @@ from .scripts.LocalMoransI import LocalMoransI
 from .scripts.MultivariateClustering import MultivariateClustering
 from .scripts.AccuracyMetrics import AccuracyMetrics
 from .scripts.NaturalNeighbour import NaturalNeighbour
-from .scripts.nearest_neighbour_analysis import NearestNeighbourAnalysis
+# from .scripts.NearestNeighbourAnalysis import NearestNeighbourAnalysis
 
 class samapleProvider(QgsProcessingProvider):
 
@@ -60,7 +59,7 @@ class samapleProvider(QgsProcessingProvider):
         self.addAlgorithm(MultivariateClustering())
         self.addAlgorithm(AccuracyMetrics())
         self.addAlgorithm(NaturalNeighbour())
-        self.addAlgorithm(NearestNeighbourAnalysis())
+        # self.addAlgorithm(NearestNeighbourAnalysis())
         # add additional algorithms here
         # self.addAlgorithm(MyOtherAlgorithm())
 
@@ -88,11 +87,11 @@ class samapleProvider(QgsProcessingProvider):
         """
         import os
         pluginPath = os.path.dirname(__file__)
-        return QIcon(os.path.join(pluginPath, 'icon.png'))
+        return QIcon(os.path.join(pluginPath, 'scripts', 'styles', 'icon.png'))
 
     def longName(self):
         """
-        Returns the a longer version of the provider name, which can include
+        Returns a longer version of the provider name, which can include
         extra details such as version numbers. E.g. "Lastools LIDAR tools
         (version 2.2.1)". This string should be localised. The default
         implementation returns the same string as name().

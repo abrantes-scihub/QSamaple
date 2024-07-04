@@ -18,6 +18,7 @@ import geopandas as gpd
 import numpy as np
 from osgeo import gdal, osr
 from scipy.spatial import cKDTree  # Ball Tree
+from qgis.PyQt.QtGui import QIcon
 
 # Configure logging
 import logging
@@ -225,6 +226,5 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
         return NaturalNeighbour()
 
     def icon(self):
-        from qgis.PyQt.QtGui import QIcon
         pluginPath = os.path.dirname(__file__)
         return QIcon(os.path.join(pluginPath, 'styles', 'icon.png'))
