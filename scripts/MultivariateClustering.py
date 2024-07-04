@@ -15,7 +15,6 @@ from qgis.core import (
     Qgis,
     QgsFeature,
     QgsGeometry,
-    QgsPointXY,
 )
 from PyQt5.QtCore import QCoreApplication
 import os
@@ -29,10 +28,8 @@ from sklearn.cluster import KMeans
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QIcon
 
+
 class MultivariateClustering(QgsProcessingAlgorithm):
-    """
-    Multivariate Clustering
-    """
     INPUT = 'INPUT'
     OUTPUT = 'OUTPUT'
     ANALYSIS_FIELDS = 'ANALYSIS_FIELDS'
@@ -76,21 +73,23 @@ class MultivariateClustering(QgsProcessingAlgorithm):
             QgsMessageLog.logMessage(f'Data before masking: {data}', 'Multivariate Clustering', level=Qgis.Info)
 
             if mask_layer:
-                data = self.maskData(data, mask_layer, analysis_fields, context)
+                masked_data = self.maskData(data, mask_layer, analysis_fields, context)
+            else:
+                masked_data = data
 
             if num_clusters is not None and num_clusters > 0:
                 num_clusters = int(num_clusters)
             else:
-                num_clusters = self.determineOptimalClusters(data, analysis_fields, initialization_method, feedback)
+                num_clusters = self.determineOptimalClusters(masked_data, analysis_fields, initialization_method, feedback)
 
-            clustered_data = self.fitKMeans(data, num_clusters, initialization_method, analysis_fields)
+            clustered_data = self.fitKMeans(masked_data, num_clusters, initialization_method, analysis_fields)
 
             ch_score = self.calculateCalinskiHarabaszPseudoFStatistic(clustered_data, analysis_fields, feedback)
-            QgsMessageLog.logMessage(f'Calinski-Harabasz pseudo F-statistic: {ch_score}', 'Multivariate Clustering', level=Qgis.Info)
+            QgsMessageLog.logMessage(f'Calinski-Harasz pseudo F-statistic: {ch_score}', 'Multivariate Clustering', level=Qgis.Info)
 
-            dest_id = self.handleOutput(parameters, context, clustered_data, tempfile.gettempdir(), input_layer)
+            dest_id = self.handleOutput(parameters, context, clustered_data, tempfile.gettempdir(), input_layer, mask_layer)
 
-            evaluation_table = self.evaluateNumberOfClusters(data, analysis_fields, initialization_method)
+            evaluation_table = self.evaluateNumberOfClusters(masked_data, analysis_fields, initialization_method)
             dest_eval_id = self.handleEvaluationTable(parameters, context, evaluation_table, tempfile.gettempdir())
 
         except Exception as e:
@@ -123,17 +122,28 @@ class MultivariateClustering(QgsProcessingAlgorithm):
 
         return gpd.GeoDataFrame(data, geometry=gpd.array.from_wkt(geometry), crs=input_layer.crs().toProj4())
 
-    def maskData(self, data, mask_layer, field, context):
+    def maskData(self, data, mask_layer, analysis_fields, context):
         QgsMessageLog.logMessage(f"Mask layer: {mask_layer.name()}", 'Multivariate Clustering', Qgis.Info)
-        QgsMessageLog.logMessage(f"Analysis fields: {field}", 'Multivariate Clustering', Qgis.Info)
+        QgsMessageLog.logMessage(f"Analysis fields: {analysis_fields}", 'Multivariate Clustering', Qgis.Info)
 
+        # Convert mask layer to GeoDataFrame
         mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
         QgsMessageLog.logMessage(f"Mask data: {mask_data}", 'Multivariate Clustering', Qgis.Info)
+        
+        # Check if the CRS of both dataframes match
+        if data.crs != mask_data.crs:
+            QgsMessageLog.logMessage("CRS mismatch: Reprojecting mask data to match data CRS.", 'Multivariate Clustering', Qgis.Info)
+            mask_data = mask_data.to_crs(data.crs)
 
-        masked_data = gpd.overlay(data, mask_data, how='intersection')
-        QgsMessageLog.logMessage(f"Masked data after overlay: {masked_data}", 'Multivariate Clustering', Qgis.Info)
+        # Perform intersection
+        try:
+            masked_data = gpd.overlay(data, mask_data, how='intersection')
+            QgsMessageLog.logMessage(f"Masked data after overlay: {masked_data}", 'Multivariate Clustering', Qgis.Info)
+        except Exception as e:
+            QgsMessageLog.logMessage(f"Error during intersection: {e}", 'Multivariate Clustering', Qgis.Critical)
+            raise e
 
-        return masked_data[field + ['geometry']]
+        return masked_data
 
     def determineOptimalClusters(self, data, analysis_fields, initialization_method, feedback=None):
         clustering_results = self.evaluateNumberOfClusters(data, analysis_fields, initialization_method)
@@ -181,40 +191,60 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         return ch_score
 
     def selectOptimalNumberOfClusters(self, clustering_results):
-        return clustering_results['Number of Clusters'].iloc[clustering_results['Pseudo F-statistic'].idxmax()]
+        best_num_clusters = clustering_results.iloc[clustering_results['Pseudo F-statistic'].idxmax()]['Number of Clusters']
+        return int(best_num_clusters)
 
-    def handleEvaluationTable(self, parameters, context, evaluation_table, temp_path):
-        fields = QgsFields()
-        fields.append(QgsField('Number of Clusters', QVariant.Int))
-        fields.append(QgsField('Pseudo F-statistic', QVariant.Double))
-
-        (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT_EVALUATION_TABLE, context, fields, QgsWkbTypes.NoGeometry)
-
-        for _, row in evaluation_table.iterrows():
-            feature = QgsFeature()
-            feature.setAttributes([int(row['Number of Clusters']), float(row['Pseudo F-statistic'])])
-            sink.addFeature(feature)
-
-        return dest_id
-
-    def handleOutput(self, parameters, context, data, temp_path, input_layer):
+    def handleOutput(self, parameters, context, data, temp_path, input_layer, mask_layer=None):
         rand_ext = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
         out_path = os.path.join(tempfile.gettempdir(), f'temp_clustered_{rand_ext}.shp')
 
+        # Save the clustered data to a temporary file
         data.to_file(out_path)
 
+        # Load the temporary file into a QGIS vector layer
         vector_layer = QgsVectorLayer(out_path, "Clustered Layer", "ogr")
         vector_layer.setCrs(input_layer.crs())
 
-        fields = input_layer.fields()
+        # Create a dictionary to map geometries to cluster values
+        geometry_to_cluster = {feature.geometry().asWkt(): feature['Cluster'] for feature in vector_layer.getFeatures()}
+
+        # Define the fields for the output layer
+        fields = QgsFields()
+        for field in input_layer.fields():
+            fields.append(field)
         fields.append(QgsField('Cluster', QVariant.Int))
 
+        # Create the output sink
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context, fields, QgsWkbTypes.Point, input_layer.crs())
 
-        for feature in vector_layer.getFeatures():
-            sink.addFeature(feature)
+        # Add features to the output sink
+        input_features = input_layer.getFeatures()
+        for feature in input_features:
+            geometry = feature.geometry()
+            geometry_key = geometry.asWkt()
+
+            if geometry_key in geometry_to_cluster:
+                cluster_value = geometry_to_cluster[geometry_key]
+                new_feature = QgsFeature(fields)
+                new_feature.setGeometry(geometry)
+
+                # Preserve attributes only for rows with a cluster number
+                attributes = feature.attributes()
+                attributes.append(cluster_value)
+                new_feature.setAttributes(attributes)
+
+                sink.addFeature(new_feature)
 
         return dest_id
+
+
+    def handleEvaluationTable(self, parameters, context, evaluation_table, temp_path):
+        evaluation_path = os.path.join(temp_path, 'cluster_evaluation.csv')
+        evaluation_table.to_csv(evaluation_path, index=False)
+
+        (sink, dest_eval_id) = self.parameterAsSink(parameters, self.OUTPUT_EVALUATION_TABLE, context, evaluation_table.dtypes, QgsWkbTypes.NoGeometry, context.project().crs())
+
+        return dest_eval_id
 
     def name(self):
         return 'Multivariate Clustering'
