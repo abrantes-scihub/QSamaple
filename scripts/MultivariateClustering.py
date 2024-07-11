@@ -15,6 +15,7 @@ from qgis.core import (
     Qgis,
     QgsFeature,
     QgsGeometry,
+    QgsCoordinateReferenceSystem
 )
 from PyQt5.QtCore import QCoreApplication
 import os
@@ -90,7 +91,7 @@ class MultivariateClustering(QgsProcessingAlgorithm):
             dest_id = self.handleOutput(parameters, context, clustered_data, tempfile.gettempdir(), input_layer, mask_layer)
 
             evaluation_table = self.evaluateNumberOfClusters(masked_data, analysis_fields, initialization_method)
-            dest_eval_id = self.handleEvaluationTable(parameters, context, evaluation_table, tempfile.gettempdir())
+            dest_eval_id = self.handleEvaluationTable(parameters, context, evaluation_table)
 
         except Exception as e:
             QgsMessageLog.logMessage(f'An error occurred: {e}', 'Multivariate Clustering', level=Qgis.Critical)
@@ -186,7 +187,7 @@ class MultivariateClustering(QgsProcessingAlgorithm):
         ch_score = (between_var / (len(np.unique(labels)) - 1)) / (within_var / (len(X) - len(np.unique(labels))))
 
         if feedback:
-            feedback.pushInfo(f"Calinski-Harabasz pseudo F-statistic: {ch_score}")
+            feedback.pushInfo(f"Calinski-Harasz pseudo F-statistic: {ch_score}")
 
         return ch_score
 
@@ -237,12 +238,22 @@ class MultivariateClustering(QgsProcessingAlgorithm):
 
         return dest_id
 
+    def handleEvaluationTable(self, parameters, context, evaluation_table):
+        # Define fields for the evaluation table
+        fields = QgsFields()
+        fields.append(QgsField('Number of Clusters', QVariant.Int))
+        fields.append(QgsField('Pseudo F-statistic', QVariant.Double))
 
-    def handleEvaluationTable(self, parameters, context, evaluation_table, temp_path):
-        evaluation_path = os.path.join(temp_path, 'cluster_evaluation.csv')
-        evaluation_table.to_csv(evaluation_path, index=False)
+        # Create the evaluation table sink
+        (sink, dest_eval_id) = self.parameterAsSink(parameters, self.OUTPUT_EVALUATION_TABLE, context, fields, QgsWkbTypes.NoGeometry, QgsCoordinateReferenceSystem('EPSG:4326'))
 
-        (sink, dest_eval_id) = self.parameterAsSink(parameters, self.OUTPUT_EVALUATION_TABLE, context, evaluation_table.dtypes, QgsWkbTypes.NoGeometry, context.project().crs())
+        # Add rows to the evaluation table sink
+        for index, row in evaluation_table.iterrows():
+            feature = QgsFeature()
+            feature.setFields(fields)
+            feature.setAttribute('Number of Clusters', int(row['Number of Clusters']))
+            feature.setAttribute('Pseudo F-statistic', float(row['Pseudo F-statistic']))
+            sink.addFeature(feature)
 
         return dest_eval_id
 
