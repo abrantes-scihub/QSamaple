@@ -19,7 +19,7 @@ import os
 import geopandas as gpd
 import numpy as np
 from osgeo import gdal, osr
-from scipy.spatial import cKDTree
+from sklearn.neighbors import BallTree
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QMessageBox
@@ -213,7 +213,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
         xx, yy = np.meshgrid(x_coords, y_coords[::-1])  # Reverse y_coords to match orientation
 
         # Replace KDTree with Ball Tree for efficiency
-        tree = cKDTree(points)
+        tree = BallTree(points)
 
         # Initialize arrays for accumulating values
         c = np.zeros_like(xx)
@@ -229,8 +229,8 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
                         continue  # Skip points outside the mask polygon
 
                 # Find the closest site and calculate the radius
-                _, indices = tree.query([(xx[i][j], yy[i][j])], k=1)
-                index = indices[0]
+                _, indices = tree.query([[xx[i][j], yy[i][j]]], k=1)
+                index = indices[0][0]
                 nearest_point = points[index]
                 r = np.linalg.norm([xx[i][j], yy[i][j]] - nearest_point)
 
