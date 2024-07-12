@@ -183,4 +183,4 @@ cython_debug/
 
 *.temp
 
-NearestNeighbourAnalysis.py
+scripts/NearestNeighbourAnalysis.py
