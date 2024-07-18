@@ -72,7 +72,7 @@ class LocalMoransI(QgsProcessingAlgorithm):
         try:
             mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
             masked_data = gpd.overlay(data, mask_data, how='intersection')
-            masked_data = masked_data[[field] + ['geometry']]
+
             return masked_data
         except Exception as e:
             QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Local Morans I', Qgis.Critical)
