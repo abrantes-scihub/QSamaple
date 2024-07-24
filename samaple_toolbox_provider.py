@@ -34,6 +34,7 @@ from .scripts.LocalMoransI import LocalMoransI
 from .scripts.MultivariateClustering import MultivariateClustering
 from .scripts.AccuracyMetrics import AccuracyMetrics
 from .scripts.NaturalNeighbour import NaturalNeighbour
+from .scripts.SAMAPLE import SAMAPLE
 # from .scripts.NearestNeighbourAnalysis import NearestNeighbourAnalysis
 
 class samapleProvider(QgsProcessingProvider):
@@ -59,6 +60,7 @@ class samapleProvider(QgsProcessingProvider):
         self.addAlgorithm(MultivariateClustering())
         self.addAlgorithm(AccuracyMetrics())
         self.addAlgorithm(NaturalNeighbour())
+        self.addAlgorithm(SAMAPLE())
         # self.addAlgorithm(NearestNeighbourAnalysis())
         # add additional algorithms here
         # self.addAlgorithm(MyOtherAlgorithm())
