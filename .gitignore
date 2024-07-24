@@ -158,3 +158,29 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+
+
+
+# Ignore compiled Python files
+#This pattern ignores compiled Python files. In Python, when you run a script or module,
+#Python generates bytecode files with a .pyc extension to improve execution speed on subsequent runs.
+#These compiled files are not meant to be versioned, as they can be regenerated.
+*.pyc
+
+
+# Ignores optimized compiled Python files
+#Similar to *.pyc, these files are generated when Python code is optimized for execution.
+#They are not typically versioned.
+*.pyo
+
+
+# Ignores swap files.
+#Swap files are temporary files created by some text editors (e.g., Vim)
+#to store changes made during editing. They are not meant to be versioned.
+*.swp
+
+
+*.temp
+
+scripts/NearestNeighbourAnalysis.py
