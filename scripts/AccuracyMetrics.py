@@ -9,11 +9,11 @@ from qgis.core import (QgsProcessing,
                       QgsWkbTypes,
                       QgsMessageLog,
                       Qgis,
+                      QgsFeatureSink,
                       QgsVectorLayer,
                       QgsFeature,
                       QgsGeometry,
-                      QgsProject,
-                      )
+                      QgsProject)
 
 from PyQt5.QtCore import QCoreApplication, QVariant
 import os
@@ -21,188 +21,178 @@ import tempfile
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import logging
 import random
 import string
 from qgis.PyQt.QtGui import QIcon
 
-####################################################################################################
-#CLASS##################### The main class for processing the algorithms ###########################
-####################################################################################################
-
 class AccuracyMetrics(QgsProcessingAlgorithm):
-    """
-    Processing functions for accuracy metrics
-    """
-    # Constants for parameters
     INPUT = 'INPUT'
     OUTPUT = 'OUTPUT'
     MEASURED_VALUE = 'MEASURED_DATA'
     ESTIMATED_VALUE = 'ESTIMATED_DATA'
     CASE_FIELD = 'CASE_FIELD'
 
-
-    def __init__(self):
-        self.dest_id = ''
-        super().__init__()
-
     def initAlgorithm(self, config):
-        self.addParameter(QgsProcessingParameterVectorLayer(self.INPUT, self.tr('Input Vector Layer'), types=[QgsProcessing.TypeVectorPoint, QgsProcessing.TypeVectorPolygon]))
-        self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Output Vector Layer'), createByDefault=True, supportsAppend=False, defaultValue=None, type=QgsProcessing.TypeVectorAnyGeometry))
-        self.addParameter(QgsProcessingParameterField(self.MEASURED_VALUE, self.tr('Measured Data Field'), parentLayerParameterName=self.INPUT, type=QgsProcessingParameterField.Numeric, allowMultiple=False))
-        self.addParameter(QgsProcessingParameterField(self.ESTIMATED_VALUE, self.tr('Estimated Data Field'), parentLayerParameterName=self.INPUT, type=QgsProcessingParameterField.Numeric, allowMultiple=False))
-        self.addParameter(QgsProcessingParameterField(self.CASE_FIELD, self.tr('Case Field'), parentLayerParameterName=self.INPUT, type=QgsProcessingParameterField.Any, allowMultiple=False, optional=True))
+        self.addParameter(QgsProcessingParameterVectorLayer(
+            self.INPUT,
+            self.tr('Input Vector Layer'),
+            types=[QgsProcessing.TypeVectorPoint, QgsProcessing.TypeVectorPolygon]
+        ))
+        self.addParameter(QgsProcessingParameterFeatureSink(
+            self.OUTPUT,
+            self.tr('Output Vector Layer'),
+            createByDefault=True,
+            supportsAppend=False
+        ))
+        self.addParameter(QgsProcessingParameterField(
+            self.MEASURED_VALUE,
+            self.tr('Measured Data Field'),
+            parentLayerParameterName=self.INPUT,
+            type=QgsProcessingParameterField.Numeric
+        ))
+        self.addParameter(QgsProcessingParameterField(
+            self.ESTIMATED_VALUE,
+            self.tr('Estimated Data Field'),
+            parentLayerParameterName=self.INPUT,
+            type=QgsProcessingParameterField.Numeric
+        ))
+        self.addParameter(QgsProcessingParameterField(
+            self.CASE_FIELD,
+            self.tr('Case Field'),
+            parentLayerParameterName=self.INPUT,
+            type=QgsProcessingParameterField.Any,
+            optional=True
+        ))
 
     def processAlgorithm(self, parameters, context, feedback):
-        """
-        Here is where the processing itself takes place.
-        """
-        dest_id = None
-
         # Extract parameters
         layer_source, measured_field, estimated_field, case_field = self.extractParameters(parameters, context)
 
         # Prepare data
         data = self.prepareData(layer_source, measured_field, estimated_field, case_field)
-
-        # Calculate accuracy metrics
-        data = AccuracyMetricsUtils.calculateError(self, data, measured_field, estimated_field)
-        data = AccuracyMetricsUtils.calculateAbsoluteError(self, data, measured_field, estimated_field)
-        data = AccuracyMetricsUtils.calculateRelativeError(self, data, measured_field, estimated_field)
-        data = AccuracyMetricsUtils.calculateAbsoluteRelativeError(self, data, measured_field, estimated_field)
-
-        # If case_field is specified, calculate Mean Absolute Error separately for each class
+        
+        # Debugging: Check the prepared data
+        QgsMessageLog.logMessage(f"Prepared Data:\n{data.head()}", 'Accuracy Metrics', Qgis.Info)
+        
+        # Calculate errors
+        data = AccuracyMetricsUtils.calculateError(data, measured_field, estimated_field)
+        data = AccuracyMetricsUtils.calculateAbsoluteError(data)
+        data = AccuracyMetricsUtils.calculateRelativeError(data, measured_field)
+        data = AccuracyMetricsUtils.calculateAbsoluteRelativeError(data)
+        
+        # Debugging: Check intermediate results
+        QgsMessageLog.logMessage(f"Data after error calculations:\n{data.head()}", 'Accuracy Metrics', Qgis.Info)
+        
         if case_field:
-            data = AccuracyMetricsUtils.calculateMeanAbsoluteError(self, data, measured_field, estimated_field, case_field)
+            # Grouped calculations
+            data = AccuracyMetricsUtils.calculateMeanAbsoluteError(data, case_field)
+            data = AccuracyMetricsUtils.calculateMSE(data, measured_field, estimated_field, case_field)
+            data = AccuracyMetricsUtils.calculateRMSE(data, measured_field, estimated_field, case_field)
+            data = AccuracyMetricsUtils.calculateSMAPE(data, measured_field, estimated_field, case_field)
+
         else:
-            # Otherwise, calculate Mean Absolute Error for the entire dataset
-            data = AccuracyMetricsUtils.calculateMeanAbsoluteError(self, data, measured_field, estimated_field)
+            # Non-grouped calculations
+            data = AccuracyMetricsUtils.calculateMeanAbsoluteError(data)
+            data = AccuracyMetricsUtils.calculateMSE(data, measured_field, estimated_field)
+            data = AccuracyMetricsUtils.calculateRMSE(data, measured_field, estimated_field)
+            data = AccuracyMetricsUtils.calculateSMAPE(data, measured_field, estimated_field)
+
+        # Debugging: Check final results
+        QgsMessageLog.logMessage(f"Final Data:\n{data.head()}", 'Accuracy Metrics', Qgis.Info)
 
         # Handle output
         dest_id = self.handleOutput(data, parameters, context, layer_source)
-
         return {self.OUTPUT: dest_id}
 
     def extractParameters(self, parameters, context):
-        """
-        Extract the parameters that will be used.
-        """
         layer_source = self.parameterAsVectorLayer(parameters, self.INPUT, context)
+        if not layer_source:
+            raise QgsProcessingException(self.tr("Invalid input layer"))
+
         measured_field = self.parameterAsString(parameters, self.MEASURED_VALUE, context)
         estimated_field = self.parameterAsString(parameters, self.ESTIMATED_VALUE, context)
         case_field = self.parameterAsString(parameters, self.CASE_FIELD, context)
 
-        # Prepare data
-        data = self.prepareData(layer_source, measured_field, estimated_field, case_field)
-
         return layer_source, measured_field, estimated_field, case_field
 
     def prepareData(self, layer_source, measured_field, estimated_field, case_field):
-        try:
-            if isinstance(layer_source, QgsVectorLayer):
-                layer = layer_source
-            else:
-                layer = QgsVectorLayer(layer_source, 'temp_layer', 'ogr')
+        if not layer_source.isValid():
+            raise QgsProcessingException(self.tr("Invalid input layer"))
 
-            if not layer.isValid():
-                raise Exception('Failed to create QgsVectorLayer from input')
-
-            data = self.qgisVectorLayerToGeoDataFrame(layer)
-
-            # Debugging output for data structure and types
-            QgsMessageLog.logMessage(f"Type of prepared data: {type(data)}", 'Accuracy Metrics', Qgis.Info)
-            QgsMessageLog.logMessage(f"Columns of prepared data: {data.columns}", 'Accuracy Metrics', Qgis.Info)
-            QgsMessageLog.logMessage(f"Structure of prepared data: {data.head()}", 'Accuracy Metrics', Qgis.Info)
-
-            return data
-
-        except Exception as e:
-            logging.error(f"An error occurred during data preparation: {e}")
-            raise
+        data = self.qgisVectorLayerToGeoDataFrame(layer_source)
+        QgsMessageLog.logMessage(f"Data structure: {data.head()}", 'Accuracy Metrics', Qgis.Info)
+        return data
 
     def qgisVectorLayerToGeoDataFrame(self, layer_source):
         try:
-            fields = layer_source.fields()
-            field_names = [field.name() for field in fields]
-            data = {
-                field_name: [feature[field_name] for feature in layer_source.getFeatures()] for field_name in field_names
-            }
-
+            data = {field.name(): [feature[field.name()] for feature in layer_source.getFeatures()]
+                    for field in layer_source.fields()}
             geometry = [feature.geometry().asWkt() for feature in layer_source.getFeatures()]
             data['geometry'] = geometry
-
-            gdf = gpd.GeoDataFrame(data, geometry=gpd.GeoSeries.from_wkt(geometry), crs=layer_source.crs().toProj4())
+            gdf = gpd.GeoDataFrame(data, geometry=gpd.GeoSeries.from_wkt(geometry), crs=layer_source.crs().toWkt())
             return gdf
-
         except Exception as e:
-            logging.exception(f"An error occurred during data preparation: {e}")
-            raise
+            raise QgsProcessingException(self.tr(f"Error converting layer to GeoDataFrame: {e}"))
 
     def handleOutput(self, data, parameters, context, layer_source):
-        try:
-            # Shorten column name
-            data.rename(columns={'Absolute Error': 'Abs_Error', 'Relative Error': 'Rel_Error', 'Absolute Relative Error': 'Abs_Rel_Error', 'Mean Absolute Error': 'M_Abs_E'}, inplace=True)
+        # Create temporary output path
+        rand_ext = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+        out_path = os.path.join(tempfile.gettempdir(), f'temp_output{rand_ext}.shp')
 
-            rand_ext = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-            out_path = os.path.join(tempfile.gettempdir(), f'temp_output{rand_ext}.shp')
+        # Save GeoDataFrame to file
+        data.to_file(out_path)
 
-            # Save GeoDataFrame to a shapefile
-            data.to_file(out_path)
+        # Create output vector layer
+        vector_layer = QgsVectorLayer(out_path, "Accuracy Metrics", "ogr")
+        if not vector_layer.isValid():
+            raise QgsProcessingException(self.tr("Failed to create output layer"))
 
-            # Create a QgsVectorLayer using the saved shapefile
-            vector_layer = QgsVectorLayer(out_path, "Accuracy Metrics", "ogr")
-            vector_layer.setCrs(layer_source.crs())
+        # Prepare fields
+        new_fields = QgsFields()
+        for field in layer_source.fields():
+            new_fields.append(field)
 
-            # Print debug information
-            QgsMessageLog.logMessage(f"Original layer fields: {[field.name() for field in layer_source.fields()]}", 'Accuracy Metrics', Qgis.Info)
-            QgsMessageLog.logMessage(f"Vector layer fields: {[field.name() for field in vector_layer.fields()]}", 'Accuracy Metrics', Qgis.Info)
+        error_fields = [
+            QgsField('Error', QVariant.Double),
+            QgsField('ABSE', QVariant.Double),
+            QgsField('RELE', QVariant.Double),
+            QgsField('ARE', QVariant.Double),
+            QgsField('MAE', QVariant.Double),
+            QgsField('MSE', QVariant.Double),
+            QgsField('RMSE', QVariant.Double),
+            QgsField('SMAPE', QVariant.Double)
+        ]
 
-            # Use the source layer's fields when creating the sink
-            fields = layer_source.fields()
+        for field in error_fields:
+            new_fields.append(field)
 
-            # Add the 'Abs_Error' field to the fields
-            fields.append(QgsField('Error', QVariant.Double))
-            fields.append(QgsField('Abs_Error', QVariant.Double))
-            fields.append(QgsField('Rel_Error', QVariant.Double))
-            fields.append(QgsField('Abs_Rel_Error', QVariant.Double))
-            fields.append(QgsField('M_Abs_E', QVariant.Double))
+        case_field = self.parameterAsString(parameters, self.CASE_FIELD, context)
+        if case_field and not new_fields.indexOf(case_field):
+            new_fields.append(QgsField(case_field, QVariant.String))
 
-            # Add case field if present
-            case_field = self.parameterAsString(parameters, self.CASE_FIELD, context)
+        # Create sink
+        (sink, dest_id) = self.parameterAsSink(
+            parameters, self.OUTPUT, context, new_fields,
+            layer_source.wkbType(), layer_source.crs()
+        )
+
+        # Add features to sink
+        for feature in vector_layer.getFeatures():
+            attrs = feature.attributes()
             if case_field:
-                # Check if the case field is already present in the source layer's fields
-                if case_field not in [field.name() for field in fields]:
-                    fields.append(QgsField(case_field, QVariant.String))
+                case_value = data.at[feature.id(), case_field]
+                if not pd.isna(case_value):
+                    attrs.append(str(case_value))
+            feature.setAttributes(attrs)
+            sink.addFeature(feature, QgsFeatureSink.FastInsert)
 
-            (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context, fields,
-                                                QgsWkbTypes.Point, layer_source.crs())
+        return dest_id
 
-            # Add features directly from the vector layer
-            for feature in vector_layer.getFeatures():
-                if case_field:
-                    # Add the case field value to the sink
-                    case_value = data.loc[feature.id(), case_field]
-                    # Ensure the case value is not empty before setting the attribute
-                    if not pd.isna(case_value):
-                        feature.setAttribute(case_field, str(case_value))
-                sink.addFeature(feature)
-
-            return dest_id
-        except Exception as e:
-            QgsMessageLog.logMessage(f'Error handling output layer: {e}', 'Accuracy Metrics', level=Qgis.Critical)
-            return 'TEMPORARY_OUTPUT_LAYER'  # Use a different name for the temporary layer
-
-
-#COMMENT################### Metadata for the Accuracy Metrics algorithm ############################
     def name(self):
-        return 'Accuracy Metrics'
+        return 'accuracymetrics'
 
     def displayName(self):
-        """
-        Returns the translated algorithm name, which should be used for any
-        user-visible display of the algorithm name.
-        """
-        return self.tr(self.name())
+        return self.tr('Accuracy Metrics')
 
     def group(self):
         return self.tr(self.groupId())
@@ -214,9 +204,8 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def shortHelpString(self):
-        return ("Accuracy Metrics. \n"
-                "Performs accuracy analysis. \n"
-                "Case Field only applies to Mean Absolute Error, \n")
+        return ("Calculates various accuracy metrics, including error measures. "
+                "Specify a case field to calculate metrics per class.")
 
     def createInstance(self):
         return AccuracyMetrics()
@@ -225,70 +214,71 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         pluginPath = os.path.dirname(__file__)
         return QIcon(os.path.join(pluginPath, 'styles', 'icon.png'))
 
-
-####################################################################################################
-#CLASS################################## Utility functions #########################################
-####################################################################################################        
 class AccuracyMetricsUtils:
-    """
-    Utility functions for calculating accuracy metrics
-    """	
     @staticmethod
-    def calculateError(self, data, measured_field, estimated_field):
-        try:
-            # Calculate the Error
-            data['Error'] = data[measured_field] - data[estimated_field]
-
-            return data
-
-        except Exception as e:
-            QgsMessageLog.logMessage(f"An error occurred during error calculation: {e}", 'Accuracy Metrics', Qgis.Critical)
-            raise
+    def calculateError(data, measured_field, estimated_field):
+        data['Error'] = data[measured_field] - data[estimated_field]
+        return data
 
     @staticmethod
-    def calculateAbsoluteError(self, data, measured_field, estimated_field):
-        """
-        Calculate the Absolute Error.
-        """
-        data['Absolute Error'] = np.abs(data['Error'])
+    def calculateAbsoluteError(data):
+        data['ABSE'] = np.abs(data['Error'])
+        return data
+
+    @staticmethod
+    def calculateRelativeError(data, measured_field):
+        data['RELE'] = data['Error'] / data[measured_field].replace(0, np.nan)
+        return data
+
+    @staticmethod
+    def calculateAbsoluteRelativeError(data):
+        data['ARE'] = np.abs(data['RELE'])
+        return data
+
+    @staticmethod
+    def calculateMeanAbsoluteError(data, case_field=None):
+        if case_field:
+            grouped_data = data.groupby(case_field)['ABSE'].mean().reset_index()
+            grouped_data = grouped_data.rename(columns={'ABSE': 'MAE'})
+            data = pd.merge(data, grouped_data, on=case_field, how='left')
+        else:
+            data['MAE'] = data['ABSE'].mean()
 
         return data
     
     @staticmethod
-    def calculateRelativeError(self, data, measured_field, estimated_field):
-        """
-        Calculate the Relative Error.
-        """
-        data['Relative Error'] = data['Error'] / data[measured_field]
-
-        return data
-
-    @staticmethod
-    def calculateAbsoluteRelativeError(self, data, measured_field, estimated_field):
-        """
-        Calculate the Absolute Relative Error.
-        """
-        data['Absolute Relative Error'] = np.abs(data['Relative Error'])
+    def calculateMSE(data, measured_field, estimated_field, case_field=None):
+        if case_field:
+            grouped_data = data.groupby(case_field).apply(
+                lambda group: ((group[measured_field] - group[estimated_field]) ** 2).mean()
+            ).reset_index(name='MSE')
+            data = pd.merge(data, grouped_data, on=case_field, how='left')
+        else:
+            data['MSE'] = ((data[measured_field] - data[estimated_field]) ** 2).mean()
         return data
     
     @staticmethod
-    def calculateMeanAbsoluteError(self, data, measured_field, estimated_field, case_field=None):
-        """
-        Calculate the Mean Absolute Error.
-        """
-        try:
-            if case_field is not None:
-                # Use the field calculator approach with expressions for grouped mean absolute errors
-                expression = f"mean(\"Absolute Error\", group_by:=\"{case_field}\")"
-                grouped_data = data.groupby(case_field, as_index=False).agg({'Absolute Error': 'mean'}).rename(columns={'Absolute Error': 'Mean Absolute Error'})
-                data = pd.merge(data, grouped_data, on=case_field, how='left')
-            else:
-                # Calculate Mean Absolute Error for the entire dataset
-                data['Absolute Error'] = pd.to_numeric(data['Absolute Error'], errors='coerce')  # Convert to numeric, coerce errors to NaN
-                data['Mean Absolute Error'] = np.abs(data['Absolute Error']).mean()
+    def calculateRMSE(data, measured_field, estimated_field, case_field=None):
+        if case_field:
+            grouped_data = data.groupby(case_field).apply(
+                lambda group: np.sqrt(((group[measured_field] - group[estimated_field]) ** 2).mean())
+            ).reset_index(name='RMSE')
+            data = pd.merge(data, grouped_data, on=case_field, how='left')
+        else:
+            data['RMSE'] = np.sqrt(((data[measured_field] - data[estimated_field]) ** 2).mean())
+        return data
 
-            return data
-
-        except Exception as e:
-            QgsMessageLog.logMessage(f"An error occurred during Mean Absolute Error calculation: {e}", 'Accuracy Metrics', Qgis.Critical)
-            raise
+    @staticmethod
+    def calculateSMAPE(data, measured_field, estimated_field, case_field=None):
+        def smape(a, f):
+            return 100 * np.mean(2 * np.abs(f - a) / (np.abs(a) + np.abs(f)))
+        
+        if case_field:
+            grouped_data = data.groupby(case_field).apply(
+                lambda group: smape(group[measured_field], group[estimated_field])
+            ).reset_index(name='SMAPE')
+            data = pd.merge(data, grouped_data, on=case_field, how='left')
+        else:
+            data['SMAPE'] = smape(data[measured_field], data[estimated_field])
+        
+        return data
