@@ -40,7 +40,7 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         ))
         self.addParameter(QgsProcessingParameterFeatureSink(
             self.OUTPUT,
-            self.tr('Output Vector Layer'),
+            self.tr('Accuracy'),
             createByDefault=True,
             supportsAppend=False
         ))
@@ -66,16 +66,16 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
 
     def processAlgorithm(self, parameters, context, feedback):
         # Extract parameters
-        layer_source, measured_field, estimated_field, case_field = self.extractParameters(parameters, context)
+        layer_source, estimated_field, measured_field, case_field = self.extractParameters(parameters, context)
 
         # Prepare data
-        data = self.prepareData(layer_source, measured_field, estimated_field, case_field)
+        data = self.prepareData(layer_source, estimated_field, measured_field, case_field)
         
         # Debugging: Check the prepared data
         QgsMessageLog.logMessage(f"Prepared Data:\n{data.head()}", 'Accuracy Metrics', Qgis.Info)
         
         # Calculate errors
-        data = AccuracyMetricsUtils.calculateError(data, measured_field, estimated_field)
+        data = AccuracyMetricsUtils.calculateError(data, estimated_field, measured_field)
         data = AccuracyMetricsUtils.calculateAbsoluteError(data)
         data = AccuracyMetricsUtils.calculateRelativeError(data, measured_field)
         data = AccuracyMetricsUtils.calculateAbsoluteRelativeError(data)
@@ -86,16 +86,16 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         if case_field:
             # Grouped calculations
             data = AccuracyMetricsUtils.calculateMeanAbsoluteError(data, case_field)
-            data = AccuracyMetricsUtils.calculateMSE(data, measured_field, estimated_field, case_field)
-            data = AccuracyMetricsUtils.calculateRMSE(data, measured_field, estimated_field, case_field)
-            data = AccuracyMetricsUtils.calculateSMAPE(data, measured_field, estimated_field, case_field)
+            data = AccuracyMetricsUtils.calculateMSE(data, estimated_field, measured_field, case_field)
+            data = AccuracyMetricsUtils.calculateRMSE(data, estimated_field, measured_field, case_field)
+            data = AccuracyMetricsUtils.calculateSMAPE(data, estimated_field, measured_field, case_field)
 
         else:
             # Non-grouped calculations
             data = AccuracyMetricsUtils.calculateMeanAbsoluteError(data)
-            data = AccuracyMetricsUtils.calculateMSE(data, measured_field, estimated_field)
-            data = AccuracyMetricsUtils.calculateRMSE(data, measured_field, estimated_field)
-            data = AccuracyMetricsUtils.calculateSMAPE(data, measured_field, estimated_field)
+            data = AccuracyMetricsUtils.calculateMSE(data, estimated_field, measured_field)
+            data = AccuracyMetricsUtils.calculateRMSE(data, estimated_field, measured_field)
+            data = AccuracyMetricsUtils.calculateSMAPE(data, estimated_field, measured_field)
 
         # Debugging: Check final results
         QgsMessageLog.logMessage(f"Final Data:\n{data.head()}", 'Accuracy Metrics', Qgis.Info)
@@ -113,9 +113,9 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         estimated_field = self.parameterAsString(parameters, self.ESTIMATED_VALUE, context)
         case_field = self.parameterAsString(parameters, self.CASE_FIELD, context)
 
-        return layer_source, measured_field, estimated_field, case_field
+        return layer_source, estimated_field, measured_field, case_field
 
-    def prepareData(self, layer_source, measured_field, estimated_field, case_field):
+    def prepareData(self, layer_source, estimated_field, measured_field, case_field):
         if not layer_source.isValid():
             raise QgsProcessingException(self.tr("Invalid input layer"))
 
@@ -142,7 +142,7 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
         # Save GeoDataFrame to file
         data.to_file(out_path)
 
-        # Create output vector layer
+        # Create Accuracy
         vector_layer = QgsVectorLayer(out_path, "Accuracy Metrics", "ogr")
         if not vector_layer.isValid():
             raise QgsProcessingException(self.tr("Failed to create output layer"))
@@ -216,8 +216,8 @@ class AccuracyMetrics(QgsProcessingAlgorithm):
 
 class AccuracyMetricsUtils:
     @staticmethod
-    def calculateError(data, measured_field, estimated_field):
-        data['Error'] = data[measured_field] - data[estimated_field]
+    def calculateError(data, estimated_field, measured_field):
+        data['Error'] = data[estimated_field] - data[measured_field]
         return data
 
     @staticmethod
@@ -247,38 +247,38 @@ class AccuracyMetricsUtils:
         return data
     
     @staticmethod
-    def calculateMSE(data, measured_field, estimated_field, case_field=None):
+    def calculateMSE(data, estimated_field, measured_field, case_field=None):
         if case_field:
             grouped_data = data.groupby(case_field).apply(
-                lambda group: ((group[measured_field] - group[estimated_field]) ** 2).mean()
+                lambda group: ((group[estimated_field] - group[measured_field]) ** 2).mean()
             ).reset_index(name='MSE')
             data = pd.merge(data, grouped_data, on=case_field, how='left')
         else:
-            data['MSE'] = ((data[measured_field] - data[estimated_field]) ** 2).mean()
+            data['MSE'] = ((data[estimated_field] - data[measured_field]) ** 2).mean()
         return data
     
     @staticmethod
-    def calculateRMSE(data, measured_field, estimated_field, case_field=None):
+    def calculateRMSE(data, estimated_field, measured_field, case_field=None):
         if case_field:
             grouped_data = data.groupby(case_field).apply(
-                lambda group: np.sqrt(((group[measured_field] - group[estimated_field]) ** 2).mean())
+                lambda group: np.sqrt(((group[estimated_field] - group[measured_field]) ** 2).mean())
             ).reset_index(name='RMSE')
             data = pd.merge(data, grouped_data, on=case_field, how='left')
         else:
-            data['RMSE'] = np.sqrt(((data[measured_field] - data[estimated_field]) ** 2).mean())
+            data['RMSE'] = np.sqrt(((data[estimated_field] - data[measured_field]) ** 2).mean())
         return data
 
     @staticmethod
-    def calculateSMAPE(data, measured_field, estimated_field, case_field=None):
+    def calculateSMAPE(data, estimated_field, measured_field, case_field=None):
         def smape(a, f):
             return 100 * np.mean(2 * np.abs(f - a) / (np.abs(a) + np.abs(f)))
         
         if case_field:
             grouped_data = data.groupby(case_field).apply(
-                lambda group: smape(group[measured_field], group[estimated_field])
+                lambda group: smape(group[estimated_field], group[measured_field])
             ).reset_index(name='SMAPE')
             data = pd.merge(data, grouped_data, on=case_field, how='left')
         else:
-            data['SMAPE'] = smape(data[measured_field], data[estimated_field])
+            data['SMAPE'] = smape(data[estimated_field], data[measured_field])
         
         return data
