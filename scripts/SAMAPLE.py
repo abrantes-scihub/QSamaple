@@ -82,7 +82,7 @@ class SAMAPLE(QgsProcessingAlgorithm):
             'VARIABLE': 'VALUE',
             'OUTPUT': parameters['LocalMoransI']
         }
-        outputs['LocalMoransI'] = processing.run('samaple_provider:Local Moran\'s I', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['LocalMoransI'] = processing.run('QSamaple_provider:Local Moran\'s I', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
         results['LocalMoransI'] = outputs['LocalMoransI']['OUTPUT']
 
         feedback.setCurrentStep(3)
@@ -118,7 +118,7 @@ class SAMAPLE(QgsProcessingAlgorithm):
             'OUTPUT': parameters['ClusteredLayer'],
             'OUTPUT_EVALUATION_TABLE': QgsProcessing.TEMPORARY_OUTPUT
         }
-        outputs['MultivariateClustering'] = processing.run('samaple_provider:Multivariate Clustering', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['MultivariateClustering'] = processing.run('QSamaple_provider:Multivariate Clustering', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
         results['ClusteredLayer'] = outputs['MultivariateClustering']['OUTPUT']
 
         feedback.setCurrentStep(5)
@@ -133,7 +133,7 @@ class SAMAPLE(QgsProcessingAlgorithm):
             'OUTPUT_CELL_SIZE': parameters['output_cell_size'],
             'OUTPUT': parameters['InterpolatedMap']
         }
-        outputs['NaturalNeighbour'] = processing.run('samaple_provider:Natural Neighbour', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['NaturalNeighbour'] = processing.run('QSamaple_provider:Natural Neighbour', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
         results['InterpolatedMap'] = outputs['NaturalNeighbour']['OUTPUT']
 
         feedback.setCurrentStep(6)
@@ -148,7 +148,7 @@ class SAMAPLE(QgsProcessingAlgorithm):
             'MEASURED_DATA': parameters['measuredreference_data_field'],
             'OUTPUT': parameters['Accuracy']
         }
-        outputs['AccuracyMetrics'] = processing.run('samaple_provider:accuracymetrics', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        outputs['AccuracyMetrics'] = processing.run('QSamaple_provider:accuracymetrics', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
         results['Accuracy'] = outputs['AccuracyMetrics']['OUTPUT']
         
         return results
@@ -168,7 +168,7 @@ class SAMAPLE(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return (
-            "SAMAPLE (Semi-Automatic Mapping and Accuracy Analysis in Plot-level Experiment) is a QGIS plugin for analyzing raster and vector data.\n\n"
+            "QSamaple (Semi-Automatic Mapping and Accuracy Analysis in Plot-level Experiment) is a QGIS plugin for analyzing raster and vector data.\n\n"
             "This tool performs the following steps:\n"
             "1. Clips a raster layer using a mask layer.\n"
             "2. Converts raster pixels to point features.\n"

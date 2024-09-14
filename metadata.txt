@@ -3,14 +3,14 @@
 # This file should be included when you package your plugin.# Mandatory items:
 
 [general]
-name=SAMAPLE Toolbox
+name=QSamaple Plugin
 qgisMinimumVersion=3.0
 description=A user friendly tool for semi-automatic mapping and accuracy analysis in plot-level experiments
 version=0.1
 author=Tales Abrantes
 email=abrantales@hotmail.com
 
-about=Welcome to SAMAPLE - Semi-automatic Mapping and Accuracy Analysis in Plot-Level Experiments, a powerful tool designed to enhance your geospatial analysis within QGIS 3.0 and later versions. What is SAMAPLE? The acronym SAMAPLE encapsulates the essence of a robust solution for Semi-automatic Mapping and Accuracy Analysis in Plot-Level Experiments. Whether you are working with agricultural plots, environmental studies, or any other geospatial data, SAMAPLE is here to streamline your mapping process and provide precision analysis through advanced mathematical models.
+about=Welcome to QSamaple Plugin - Semi-automatic Mapping and Accuracy Analysis in Plot-Level Experiments, a powerful tool designed to enhance your geospatial analysis within QGIS 3.0 and later versions. What is QSamaple Plugin? The acronym QSamaple Plugin encapsulates the essence of a robust solution for Semi-automatic Mapping and Accuracy Analysis in Plot-Level Experiments. Whether you are working with agricultural plots, environmental studies, or any other geospatial data, QSamaple Plugin is here to streamline your mapping process and provide precision analysis through advanced mathematical models.
 
 tracker=http://bugs
 repository=http://repo

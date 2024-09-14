@@ -1,5 +1,5 @@
 #/***************************************************************************
-# samaple
+# QSamaple
 #
 # A user friendly tool for semi-automatic mapping and accuracy analysis in plot-level experiments
 #							 -------------------
@@ -38,13 +38,13 @@ LOCALES =
 # translation
 SOURCES = \
 	__init__.py \
-	samaple_toolbox.py 
+	QSamaple.py 
 
-PLUGINNAME = samaple_toolbox
+PLUGINNAME = QSamaple Plugin
 
 PY_FILES = \
 	__init__.py \
-	samaple_toolbox.py 
+	QSamaple.py 
 
 UI_FILES = 
 

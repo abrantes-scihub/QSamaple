@@ -1,4 +1,4 @@
-# SAMAPLE Toolbox
+# QSamaple
 
 [![QGIS Version](https://img.shields.io/badge/QGIS-3.x-brightgreen)](https://qgis.org/)
 
@@ -10,7 +10,7 @@ A user-friendly tool for semi-automatic mapping and accuracy analysis  in plot-l
 
 ## Features
 
-SAMPLE Toolbox comprises a set of tools for spatial analysis and accuracy measurements combined to design the *samaple model* - a workflow that performs the mapping and accuracy measurements in a semi-automatic manner.
+QSamaple comprises a set of tools for spatial analysis and accuracy measurements combined to design the *samaple model* - a workflow that performs the mapping and accuracy measurements in a semi-automatic manner.
 
 - Spatial Analysis
     - *Local Moran's I*: it was designed to calculate Local Moran's I, a spatial autocorrelation statistic, for analyzing spatial patterns and outliers locations.
