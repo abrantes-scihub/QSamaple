@@ -23,6 +23,8 @@ from sklearn.neighbors import BallTree
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QMessageBox
+from scipy.spatial import ConvexHull
+import matplotlib.path as mplPath
 
 import logging
 
@@ -54,7 +56,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterField(self.FIELD_ANALYSIS, self.tr('Field Analysis'), parentLayerParameterName=self.INPUT, type=QgsProcessingParameterField.Numeric, allowMultiple=False))
         self.addParameter(QgsProcessingParameterNumber(self.OUTPUT_CELL_SIZE, self.tr('Output Cell Size'), type=QgsProcessingParameterNumber.Double, minValue=0.0, defaultValue=3.0))
         self.addParameter(QgsProcessingParameterFeatureSource(self.MASK_LAYER, self.tr('Mask Layer'), types=[QgsProcessing.TypeVectorPolygon], optional=True, defaultValue=None))
-        self.addParameter(QgsProcessingParameterRasterDestination(self.OUTPUT, self.tr('Output Raster')))
+        self.addParameter(QgsProcessingParameterRasterDestination(self.OUTPUT, self.tr('Interpolated Map')))
 
     def processAlgorithm(self, parameters, context, feedback):
         """
@@ -77,7 +79,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
 
             interpolated_values = self.efficientDiscreteSibsonInterpolation(data, field_analysis, output_cell_size)
 
-            # Write interpolated values to output raster
+            # Write interpolated values to Interpolated Map
             self.saveInterpolatedRaster(interpolated_values, output_raster_path, data.total_bounds, output_cell_size, input_layer.crs(), mask_layer)
 
             return {self.OUTPUT: output_raster_path}
@@ -151,22 +153,19 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
     def maskData(self, data, mask_layer, field, context):
         """
         Masks data based on a polygon mask layer.
-
-        Args:
-            data (gpd.GeoDataFrame): Input data to be masked.
-            mask_layer (QgsVectorLayer): Mask layer defining the area to be masked.
-            field (str): Field name for analysis.
-            context (QgsProcessingContext): Processing context.
-
-        Returns:
-            gpd.GeoDataFrame: Masked GeoDataFrame.
         """
         try:
             # Convert mask layer to GeoDataFrame
             mask_data = self.qgisVectorLayerToGeoDataFrame(mask_layer)
+            
+            if mask_data.empty:
+                raise Exception("Mask layer data is empty")
 
             # Perform spatial join to filter data based on mask layer
             masked_data = gpd.overlay(data, mask_data, how='intersection')
+
+            if masked_data.empty:
+                raise Exception("No intersection between data and mask layer")
 
             # Keep only the original columns from the input data
             masked_data = masked_data[[field] + ['geometry']]
@@ -178,92 +177,74 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             QgsMessageLog.logMessage(f"Error masking data: {str(e)}", 'Natural Neighbour', Qgis.Critical)
             return None
 
-    def efficientDiscreteSibsonInterpolation(self, data, field, output_cell_size, mask_layer=None):
+    def efficientDiscreteSibsonInterpolation(self, data, field, output_cell_size):
         """
-        Performs efficient discrete Sibson interpolation.
-
-        Args:
-            data (gpd.GeoDataFrame): Input data for interpolation.
-            field (str): Field name for analysis.
-            output_cell_size (float): Output cell size for raster.
-            mask_layer (QgsVectorLayer, optional): Mask layer defining the area of interest.
-
-        Returns:
-            numpy.ndarray: Interpolated values as a 2D numpy array.
+        Performs efficient discrete Sibson interpolation using only the convex hull approach.
         """
-        # Extract points and values from the data source
         points = np.column_stack((data.geometry.x, data.geometry.y))
         values = np.array(data[field])
 
-        # Determine extent based on the data
+        # Define the extent of the interpolation grid based on the data
         extent = data.total_bounds
         min_x, min_y, max_x, max_y = extent
 
-        # If a mask layer is provided, adjust extent to its boundary
-        if mask_layer:
-            mask_extent = mask_layer.extent()
-            min_x = mask_extent.xMinimum()
-            max_x = mask_extent.xMaximum()
-            min_y = mask_extent.yMinimum()
-            max_y = mask_extent.yMaximum()
-
-        # Generate grid coordinates based on adjusted extent and output cell size
+        # Create grid for interpolation
         x_coords = np.arange(min_x, max_x, output_cell_size)
         y_coords = np.arange(min_y, max_y, output_cell_size)
-        xx, yy = np.meshgrid(x_coords, y_coords[::-1])  # Reverse y_coords to match orientation
+        xx, yy = np.meshgrid(x_coords, y_coords[::-1])
 
-        # Replace KDTree with Ball Tree for efficiency
+        # Calculate convex hull of the points
+        hull = ConvexHull(points)
+        hull_path = mplPath.Path(points[hull.vertices])
+
+        # Create a mask for grid points outside the convex hull
+        grid_points = np.c_[xx.ravel(), yy.ravel()]
+        hull_mask = hull_path.contains_points(grid_points).reshape(xx.shape)
+
+        # Initialize the interpolation arrays
+        c = np.zeros_like(xx.ravel())
+        n = np.zeros_like(xx.ravel())
+
+        # Perform the interpolation
         tree = BallTree(points)
+        distances, indices = tree.query(grid_points, k=1)
+        distances = distances.ravel()
+        indices = indices.ravel()
+        nearest_values = values[indices]
 
-        # Initialize arrays for accumulating values
-        c = np.zeros_like(xx)
-        n = np.zeros_like(xx)
+        for i in range(len(xx.ravel())):
+            if not hull_mask.ravel()[i]:
+                continue  # Skip points outside the convex hull
 
-        # Iterate over raster positions
-        for i in range(xx.shape[0]):
-            for j in range(xx.shape[1]):
-                # If mask layer is provided, check if the point is within the mask polygon
-                if mask_layer:
-                    point_geom = QgsGeometry.fromPointXY(QgsPointXY(xx[i][j], yy[i][j]))
-                    if not point_geom.within(mask_layer.geometry()):
-                        continue  # Skip points outside the mask polygon
+            r = distances[i]
+            within_radius = (xx - xx.ravel()[i])**2 + (yy - yy.ravel()[i])**2 <= r**2
+            indices_within_radius = np.where(within_radius.ravel())[0]
 
-                # Find the closest site and calculate the radius
-                _, indices = tree.query([[xx[i][j], yy[i][j]]], k=1)
-                index = indices[0][0]
-                nearest_point = points[index]
-                r = np.linalg.norm([xx[i][j], yy[i][j]] - nearest_point)
+            c[indices_within_radius] += nearest_values[i]
+            n[indices_within_radius] += 1
 
-                # Iterate over nearby raster positions within the radius
-                p_range = np.where((xx - xx[i][j])**2 + (yy - yy[i][j])**2 <= r**2)
-                c[p_range] += values[index]
-                n[p_range] += 1
-
-        # Compute interpolated values
+        # Calculate interpolated values
         with np.errstate(divide='ignore', invalid='ignore'):
             interpolated_values = np.divide(c, n, out=np.zeros_like(c), where=n != 0)
+
+        interpolated_values = interpolated_values.reshape(xx.shape)
+        interpolated_values[~hull_mask] = np.nan  # Set values outside the convex hull to NaN
+
+        # Log debugging information
+        QgsMessageLog.logMessage(f"Extent: {extent}", 'Natural Neighbour', Qgis.Info)
+        QgsMessageLog.logMessage(f"Convex hull mask sum: {np.sum(hull_mask)}", 'Natural Neighbour', Qgis.Info)
+        QgsMessageLog.logMessage(f"Interpolated values stats: min={np.nanmin(interpolated_values)}, max={np.nanmax(interpolated_values)}", 'Natural Neighbour', Qgis.Info)
 
         return interpolated_values
 
     def saveInterpolatedRaster(self, interpolated_values, output_raster_path, extent, output_cell_size, crs, mask_layer=None):
         """
         Saves interpolated values to a GeoTIFF raster.
-
-        Args:
-            interpolated_values (numpy.ndarray): Interpolated values as a 2D numpy array.
-            output_raster_path (str): Output path for the raster file.
-            extent (tuple): Extent of the data (min_x, min_y, max_x, max_y).
-            output_cell_size (float): Output cell size for raster.
-            crs (QgsCoordinateReferenceSystem): CRS of the input data.
-            mask_layer (QgsVectorLayer, optional): Mask layer for clipping the output raster.
-
-        Returns:
-            str: Path to the saved raster file.
         """
         rows, cols = interpolated_values.shape
 
         try:
-            # Create output raster file
+            # Create Interpolated Map file
             driver = gdal.GetDriverByName('GTiff')
             output_raster = driver.Create(output_raster_path, cols, rows, 1, gdal.GDT_Float32)
             
@@ -271,13 +252,13 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
                 raise IOError(f"Failed to create raster file at {output_raster_path}")
 
             # Set geo-transform
-            output_raster.SetGeoTransform((extent[0], output_cell_size, 0, extent[3], 0, -output_cell_size))
-            
+            output_raster.SetGeoTransform((extent[0] - output_cell_size / 2, output_cell_size, 0, extent[3] + output_cell_size / 2, 0, -output_cell_size))
+
             # Set NoData value
             output_band = output_raster.GetRasterBand(1)
             output_band.SetNoDataValue(np.nan)
             
-            # Write interpolated values to output raster
+            # Write interpolated values to Interpolated Map
             output_band.WriteArray(interpolated_values)
             
             # Set spatial reference
@@ -287,6 +268,7 @@ class NaturalNeighbour(QgsProcessingAlgorithm):
             
             # Clip raster using mask layer
             if mask_layer:
+                QgsMessageLog.logMessage(f"Clipping raster with mask layer: {mask_layer.source()}", 'Natural Neighbour', Qgis.Info)
                 gdal.Warp(output_raster_path, output_raster, cutlineDSName=mask_layer.source(), cropToCutline=True, dstNodata=np.nan)
             
             # Close the raster file
